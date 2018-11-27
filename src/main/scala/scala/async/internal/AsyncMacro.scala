@@ -1,4 +1,10 @@
+/*
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
+ */
+
 package scala.async.internal
+
+import scala.async.internal.transform._
 
 object AsyncMacro {
   def apply(c0: reflect.macros.Context, base: AsyncBase)(body0: c0.Tree): AsyncMacro { val c: c0.type } = {

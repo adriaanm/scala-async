@@ -1,10 +1,16 @@
-package scala.async.internal
+/*
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
+ */
+
+package scala.async.internal.transform
+
+import scala.async.internal.{AsyncBase, AsyncMacro}
 
 trait AsyncTransform {
   self: AsyncMacro =>
 
-  import c.universe._
   import c.internal._
+  import c.universe._
   import decorators._
 
   val asyncBase: AsyncBase

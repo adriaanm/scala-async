@@ -1,20 +1,20 @@
 /*
- * Copyright (C) 2012-2014 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
  */
-package scala.async.internal
+
+package scala.async.internal.transform
 
 import java.util.function.IntUnaryOperator
 
+import scala.async.internal.{AsyncMacro, FutureSystem}
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import language.existentials
 
 trait ExprBuilder {
   builder: AsyncMacro =>
 
-  import c.universe._
-  import defn._
   import c.internal._
+  import c.universe._
 
   val futureSystem: FutureSystem
   val futureSystemOps: futureSystem.Ops { val c: builder.c.type }

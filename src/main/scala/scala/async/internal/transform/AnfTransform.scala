@@ -1,11 +1,12 @@
 
 /*
- * Copyright (C) 2012-2014 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
  */
 
-package scala.async.internal
+package scala.async.internal.transform
 
 import scala.Predef._
+import scala.async.internal.AsyncMacro
 import scala.reflect.internal.util.Collections.map2
 
 private[async] trait AnfTransform {

@@ -1,10 +1,9 @@
 /*
  * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
  */
-package scala.async.internal
+package scala.async.internal.transform
 
-import scala.reflect.macros.Context
-import reflect.ClassTag
+import scala.async.internal.AsyncMacro
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -15,8 +14,8 @@ import scala.collection.mutable.ListBuffer
 private[async] trait TransformUtils {
   self: AsyncMacro =>
 
-  import c.universe._
   import c.internal._
+  import c.universe._
   import decorators._
 
   object name extends asyncNames.AsyncName {

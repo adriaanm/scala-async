@@ -1,5 +1,10 @@
-package scala.async.internal
+/*
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
+ */
 
+package scala.async.internal.transform
+
+import scala.async.internal.AsyncMacro
 import scala.collection.mutable
 
 trait Lifter {

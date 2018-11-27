@@ -1,9 +1,10 @@
 /*
- * Copyright (C) 2012-2014 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
  */
 
 package scala.async.internal
 
+import scala.async.internal.transform.AsyncUtils
 import scala.reflect.internal.annotations.compileTimeOnly
 import scala.reflect.macros.Context
 import scala.reflect.api.Universe

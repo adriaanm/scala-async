@@ -1,11 +1,14 @@
-package scala.async.internal
+/*
+ * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
+ */
 
-import scala.collection.mutable
+package scala.async.internal.transform
 
-import java.util
-import java.util.function.{IntConsumer, IntPredicate}
+import java.util.function.IntConsumer
 
+import scala.async.internal.AsyncMacro
 import scala.collection.immutable.IntMap
+import scala.collection.mutable
 
 trait LiveVariables {
   self: AsyncMacro =>
@@ -144,7 +147,7 @@ trait LiveVariables {
     def isPred(state1: Int, state2: Int): Boolean = {
       val seen = new StateSet()
 
-      def isPred0(state1: Int, state2: Int): Boolean = 
+      def isPred0(state1: Int, state2: Int): Boolean =
         if(state1 == state2) false
         else if (seen.contains(state1)) false  // breaks cycles in the CFG
         else cfg get state1 match {
