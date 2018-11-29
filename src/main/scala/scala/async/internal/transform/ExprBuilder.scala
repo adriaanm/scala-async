@@ -32,17 +32,11 @@ trait ExprBuilder extends TransformUtils {
 
     var stats: List[Tree]
 
-    def treesThenStats(trees: List[Tree]): List[Tree] = {
-      (stats match {
-        case init :+ last if tpeOf(last) =:= definitions.NothingTpe =>
-          adaptToUnit((trees ::: init) :+ Typed(last, TypeTree(definitions.AnyTpe)))
-        case _ =>
-          adaptToUnit(trees ::: stats)
-      }) :: Nil
-    }
+    def treeThenStats(tree: Tree): List[Tree] =
+      adaptToUnitIgnoringNothing(tree :: stats) :: Nil
 
     final def allStats: List[Tree] = this match {
-      case a: AsyncStateWithAwait => treesThenStats(a.awaitable.resultValDef :: Nil)
+      case a: AsyncStateWithAwait => treeThenStats(a.awaitable.resultValDef)
       case _ => stats
     }
 
@@ -60,7 +54,7 @@ trait ExprBuilder extends TransformUtils {
       Array(nextState)
 
     def mkHandlerCaseForState[T: WeakTypeTag]: CaseDef = {
-      mkHandlerCase(state, treesThenStats(mkStateTree(nextState, symLookup) :: Nil))
+      mkHandlerCase(state, treeThenStats(mkStateTree(nextState, symLookup)))
     }
 
     override val toString: String =
@@ -96,20 +90,22 @@ trait ExprBuilder extends TransformUtils {
         if (futureSystemOps.continueCompletedFutureOnSameThread) {
           val tempName = name.completed
           val initTemp = ValDef(NoMods, tempName, TypeTree(futureSystemOps.tryType[Any]), futureSystemOps.getCompleted[Any](c.Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
-          val ifTree = If(Apply(Select(Literal(Constant(null)), TermName("ne")), Ident(tempName) :: Nil),
-            adaptToUnit(ifIsFailureTree[T](Ident(tempName)) :: Nil),
-            Block(toList(callOnComplete), Return(literalUnit)))
+          val null_ne = Select(Literal(Constant(null)), TermName("ne"))
+          val ifTree =
+            If(Apply(null_ne, Ident(tempName) :: Nil),
+              adaptToUnit(ifIsFailureTree[T](Ident(tempName)) :: Nil),
+              Block(toList(callOnComplete), Return(literalUnit)))
+
           initTemp :: ifTree :: Nil
         } else
           toList(callOnComplete) ::: Return(literalUnit) :: Nil
       mkHandlerCase(state, stats ++ List(mkStateTree(onCompleteState, symLookup)) ++ tryGetOrCallOnComplete)
     }
 
-    private def tryGetTree(tryReference: => Tree) =
-      Assign(
-        Ident(awaitable.resultName),
-        TypeApply(Select(futureSystemOps.tryyGet[Any](c.Expr[futureSystem.Tryy[Any]](tryReference)).tree, newTermName("asInstanceOf")), List(TypeTree(awaitable.resultType)))
-      )
+    private def tryGetTree(tryReference: => Tree) = {
+      val tryyGet = futureSystemOps.tryyGet[Any](c.Expr[futureSystem.Tryy[Any]](tryReference)).tree
+      Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, awaitable.resultType))
+    }
 
     /* if (tr.isFailure)
      *   result.complete(tr.asInstanceOf[Try[T]])
@@ -121,13 +117,11 @@ trait ExprBuilder extends TransformUtils {
      */
     def ifIsFailureTree[T: WeakTypeTag](tryReference: => Tree) = {
       val getAndUpdateState = Block(List(tryGetTree(tryReference)), mkStateTree(nextState, symLookup))
-      if (asyncBase.futureSystem.emitTryCatch) {
+      if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(c.Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(futureSystemOps.completeProm[T](
             c.Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)),
-            c.Expr[futureSystem.Tryy[T]](
-              TypeApply(Select(tryReference, newTermName("asInstanceOf")),
-                List(TypeTree(futureSystemOps.tryType[T]))))).tree),
+            c.Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, futureSystemOps.tryType[T]))).tree),
             Return(literalUnit)),
           getAndUpdateState
         )
@@ -156,11 +150,9 @@ trait ExprBuilder extends TransformUtils {
     def effectiveNextState(nextState: Int) = nextJumpState.orElse(if (nextJumpSymbol == NoSymbol) None else Some(stateIdForLabel(nextJumpSymbol))).getOrElse(nextState)
 
     def +=(stat: Tree): this.type = {
-      stat match {
-        case Literal(Constant(())) => // This case occurs in do/while
-        case _ =>
-          assert(nextJumpState.isEmpty, s"statement appeared after a label jump: $stat")
-      }
+      // Allow `()` (occurs in do/while)
+      assert(isLiteralUnit(stat) || nextJumpState.isEmpty, s"statement appeared after a label jump: $stat")
+
       def addStat() = stats += stat
       stat match {
         case Apply(fun, args) if isLabel(fun.symbol) =>
@@ -277,7 +269,7 @@ trait ExprBuilder extends TransformUtils {
         currState = afterAwaitState
         stateBuilder = new AsyncStateBuilder(currState, symLookup)
 
-      case If(cond, thenp, elsep) if containsAwait(stat) || containsForiegnLabelJump(stat) =>
+      case If(cond, thenp, elsep) if containsAwait(stat) || containsForeignLabelJump(stat) =>
         checkForUnsupportedAwait(cond)
 
         val thenStartState = nextState()
@@ -513,7 +505,12 @@ trait ExprBuilder extends TransformUtils {
       private def resumeFunTree[T: WeakTypeTag]: Tree = {
         val stateMemberSymbol = symLookup.stateMachineMember(name.state)
         val stateMemberRef = symLookup.memberRef(name.state)
-        val body = Match(stateMemberRef, mkCombinedHandlerCases[T] ++ initStates.flatMap(_.mkOnCompleteHandler[T]) ++ List(CaseDef(Ident(nme.WILDCARD), EmptyTree, Throw(Apply(Select(New(Ident(defn.IllegalStateExceptionClass)), termNames.CONSTRUCTOR), List())))))
+        val body =
+          Match(stateMemberRef,
+                 mkCombinedHandlerCases[T] ++
+                 initStates.flatMap(_.mkOnCompleteHandler[T]) ++
+                 List(CaseDef(Ident(nme.WILDCARD), EmptyTree, Throw(Apply(Select(New(Ident(defn.IllegalStateExceptionClass)), termNames.CONSTRUCTOR), List())))))
+
         val body1 = compactStates(body)
 
         maybeTry(
@@ -603,38 +600,12 @@ trait ExprBuilder extends TransformUtils {
   // are allocated in ascending order from 0.
   private def stateIdForLabel(sym: Symbol): Int = -symId(sym)
 
-  private def tpeOf(t: Tree): Type = t match {
-    case _ if t.tpe != null => t.tpe
-    case Try(body, Nil, _) => tpeOf(body)
-    case Block(_, expr) => tpeOf(expr)
-    case Literal(Constant(value)) if value == () => definitions.UnitTpe
-    case Return(_) => definitions.NothingTpe
-    case _ => NoType
-  }
-
-  private def adaptToUnit(rhs: List[Tree]): c.universe.Block = {
-    rhs match {
-      case (rhs: Block) :: Nil if tpeOf(rhs) <:< definitions.UnitTpe =>
-        rhs
-      case init :+ last if tpeOf(last) <:< definitions.UnitTpe =>
-        Block(init, last)
-      case init :+ (last @ Literal(Constant(()))) =>
-        Block(init, last)
-      case init :+ (last @ Block(_, Return(_) | Literal(Constant(())))) =>
-        Block(init, last)
-      case init :+ (Block(stats, expr)) =>
-        Block(init, Block(stats :+ expr, literalUnit))
-      case _ =>
-        Block(rhs, literalUnit)
-    }
-  }
-
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
 
-
-  def toList(tree: Tree): List[Tree] = tree match {
-    case Block(stats, Literal(Constant(value))) if value == () => stats
+  // TODO: should this explode blocks even when expr is not ()?
+  private def toList(tree: Tree): List[Tree] = tree match {
+    case Block(stats, expr) if isLiteralUnit(expr) => stats
     case _ => tree :: Nil
   }
 

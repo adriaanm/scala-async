@@ -24,7 +24,7 @@ private[async] trait TransformUtils extends AsyncContext {
     def fresh(name: String): String = c.freshName(name)
   }
 
-  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) = if (asyncBase.futureSystem.emitTryCatch) Try(block, catches, finalizer) else block
+  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) = if (emitTryCatch) Try(block, catches, finalizer) else block
 
   def isAsync(fun: Tree) =
     fun.symbol == defn.Async_async
@@ -38,14 +38,76 @@ private[async] trait TransformUtils extends AsyncContext {
 
   def literalNull = Literal(Constant(null))
 
+  def typeEqualsNothing(tp: Type) = tp =:= definitions.NothingTpe
+
+  def typeEqualsUnit(tp: Type) = tp =:= definitions.UnitTpe
+  def castToUnit(t: Tree) = gen.mkCast(t, definitions.UnitTpe)
+
+  def assignUnitType(t: Tree): t.type = internal.setType(t, definitions.UnitTpe)
+  def setUnitMethodInfo(sym: Symbol): sym.type = internal.setInfo(sym, methodType(Nil, definitions.UnitTpe))
+
   def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
+
   def literalUnit = Literal(Constant(())) // a def to avoid sharing trees
 
   def isLiteralUnit(t: Tree) = t match {
-    case Literal(Constant(())) =>
-      true
+    case Literal(Constant(())) => true
     case _ => false
   }
+
+  def function0ToUnit = typeOf[() => Unit]
+  def apply0DefDef: DefDef =
+    DefDef(NoMods, name.apply, Nil, Nil, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
+
+  def function1ToUnit(argTp: Type, useClass: Boolean) = {
+    val fun =
+      if (useClass) symbolOf[scala.runtime.AbstractFunction1[Any, Any]]
+      else symbolOf[scala.Function1[Any, Any]]
+
+    appliedType(fun, argTp, typeOf[Unit])
+  }
+  def apply1ToUnitDefDef(argTp: Type): DefDef = {
+    val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
+    DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
+  }
+
+
+  def mkAsInstanceOf(qual: Tree, tp: Type) =
+    TypeApply(Select(qual, newTermName("asInstanceOf")), List(TypeTree(tp)))
+
+  private def tpeOf(t: Tree): Type = t match {
+    case _ if t.tpe != null                      => t.tpe
+    case Try(body, Nil, _)                       => tpeOf(body)
+    case Block(_, expr)                          => tpeOf(expr)
+    case Literal(Constant(value)) if value == () => definitions.UnitTpe
+    case Return(_)                               => definitions.NothingTpe
+    case _                                       => NoType
+  }
+
+  def adaptToUnit(rhs: List[Tree]): c.universe.Block =
+    rhs match {
+      case (rhs: Block) :: Nil if tpeOf(rhs) <:< definitions.UnitTpe  =>
+        rhs
+      case init :+ last if tpeOf(last) <:< definitions.UnitTpe        =>
+        Block(init, last)
+      case init :+ (last@Literal(Constant(())))                       =>
+        Block(init, last)
+      case init :+ (last@Block(_, Return(_) | Literal(Constant(())))) =>
+        Block(init, last)
+      case init :+ Block(stats, expr)                                 =>
+        Block(init, Block(stats :+ expr, literalUnit))
+      case _                                                          =>
+        Block(rhs, literalUnit)
+    }
+
+  // TODO: why add the :Any type ascription to hide a tree of type Nothing? adaptToUnit doesn't seem to care
+  def adaptToUnitIgnoringNothing(stats: List[Tree]): c.universe.Block =
+    stats match {
+      case init :+ last if tpeOf(last) =:= definitions.NothingTpe =>
+        adaptToUnit(init :+ Typed(last, TypeTree(definitions.AnyTpe)))
+      case _                                                      =>
+        adaptToUnit(stats)
+    }
 
   def isPastTyper =
     c.universe.asInstanceOf[scala.reflect.internal.SymbolTable].isPastTyper
@@ -168,7 +230,7 @@ private[async] trait TransformUtils extends AsyncContext {
   // `while(await(x))` ... or `do { await(x); ... } while(...)` contain an `If` that loops;
   // we must break that `If` into states so that it convert the label jump into a state machine
   // transition
-  final def containsForiegnLabelJump(t: Tree): Boolean = {
+  final def containsForeignLabelJump(t: Tree): Boolean = {
     val labelDefs = t.collect {
       case ld: LabelDef => ld.symbol
     }.toSet
@@ -247,6 +309,18 @@ private[async] trait TransformUtils extends AsyncContext {
     case Block(stats, expr) => (stats, expr)
     case _                  => (List(tree), Literal(Constant(())))
   }
+
+  def blockToList(tree: Tree): List[Tree] = tree match {
+    case Block(stats, expr) => stats :+ expr
+    case t                  => t :: Nil
+  }
+
+  def listToBlock(trees: List[Tree]): Block = trees match {
+    case trees @ (init :+ last) =>
+      val pos = trees.map(_.pos).reduceLeft(_ union _)
+      newBlock(init, last).setType(last.tpe).setPos(pos)
+  }
+
 
   def emptyConstructor: DefDef = {
     val emptySuperCall = Apply(Select(Super(This(tpnme.EMPTY), tpnme.EMPTY), nme.CONSTRUCTOR), Nil)
@@ -389,6 +463,7 @@ private[async] trait TransformUtils extends AsyncContext {
   // Copy/Pasted from Scala 2.10.3. See scala/bug#7694
   private lazy val UncheckedBoundsClass =
     c.mirror.staticClass("scala.reflect.internal.annotations.uncheckedBounds")
+  // TODO: when we run after erasure the annotation is not needed
   final def uncheckedBounds(tp: Type): Type =
     if ((tp.typeArgs.isEmpty && (tp match { case _: TypeRef => true; case _ => false}))) tp
     else withAnnotation(tp, Annotation(UncheckedBoundsClass.asType.toType, Nil, ListMap()))

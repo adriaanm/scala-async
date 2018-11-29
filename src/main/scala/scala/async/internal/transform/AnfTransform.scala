@@ -55,16 +55,8 @@ private[async] trait AnfTransform extends TransformUtils {
       def typed(tree: Tree) = api.typecheck(tree)
       def typedAt(exprPos: Position, tree: Tree) = api.typecheck(atPos(exprPos)(tree))
 
-      def blockToList(tree: Tree): List[Tree] = tree match {
-        case Block(stats, expr) => stats :+ expr
-        case t                  => t :: Nil
-      }
-
-      def listToBlock(trees: List[Tree]): Block = trees match {
-        case trees @ (init :+ last) =>
-          val pos = trees.map(_.pos).reduceLeft(_ union _)
-          newBlock(init, last).setType(last.tpe).setPos(pos)
-      }
+      def typedAssign(lhs: Tree, varSym: Symbol) =
+        typedAt(lhs.pos, Assign(Ident(varSym), mkAttributedCastPreservingAnnotations(lhs, tpe(varSym))))
 
       object linearize {
         def transformToList(tree: Tree): List[Tree] = {
@@ -84,16 +76,13 @@ private[async] trait AnfTransform extends TransformUtils {
             case Apply(fun, args) if isAwait(fun) =>
               val valDef = defineVal(name.await(), expr, tree.pos)
               val ref = gen.mkAttributedStableRef(valDef.symbol).setType(tree.tpe)
-              val ref1 = if (ref.tpe =:= definitions.UnitTpe)
-                // https://github.com/scala/async/issues/74
-                // Use a cast to hide from "pure expression does nothing" error
-                //
-                // TODO avoid creating a ValDef for the result of this await to avoid this tree shape altogether.
-                // This will require some deeper changes to the later parts of the macro which currently assume regular
-                // tree structure around `await` calls.
-                typedAt(tree.pos, gen.mkCast(ref, definitions.UnitTpe))
-              else ref
-              stats :+ valDef :+ atPos(tree.pos)(ref1)
+              // https://github.com/scala/async/issues/74
+              // Use a cast to hide from "pure expression does nothing" error
+              //
+              // TODO avoid creating a ValDef for the result of this await to avoid this tree shape altogether.
+              // This will require some deeper changes to the later parts of the macro which currently assume regular
+              // tree structure around `await` calls.
+              stats :+ valDef :+ atPos(tree.pos)(if (!typeEqualsUnit(ref.tpe)) ref else typedAt(tree.pos, castToUnit(ref)))
 
             case If(cond, thenp, elsep) =>
               // If we run the ANF transform post patmat, deal with trees like `(if (cond) jump1(){String} else jump2(){String}){String}`
@@ -104,62 +93,56 @@ private[async] trait AnfTransform extends TransformUtils {
                 case _: Apply if isLabel(t.symbol) => true
                 case _ => false
               }
-              if (isPatMatGeneratedJump(expr)) {
-                internal.setType(expr, definitions.UnitTpe)
-              }
+              if (isPatMatGeneratedJump(expr))
+                assignUnitType(expr)
+
               // if type of if-else is Unit don't introduce assignment,
               // but add Unit value to bring it into form expected by async transform
-              if (expr.tpe =:= definitions.UnitTpe) {
+              if (typeEqualsUnit(expr.tpe)) {
                 statsExprUnit
-              } else if (expr.tpe =:= definitions.NothingTpe) {
+              } else if (typeEqualsNothing(expr.tpe)) {
                 statsExprThrow
               } else {
                 val varDef = defineVar(name.ifRes(), expr.tpe, tree.pos)
-                def typedAssign(lhs: Tree) =
-                  typedAt(lhs.pos, Assign(Ident(varDef.symbol), mkAttributedCastPreservingAnnotations(lhs, tpe(varDef.symbol))))
 
                 def branchWithAssign(t: Tree): Tree = {
                   t match {
                     case MatchEnd(ld) =>
                       deriveLabelDef(ld, branchWithAssign)
                     case blk @ Block(thenStats, thenExpr) =>
-                      treeCopy.Block(blk, thenStats, branchWithAssign(thenExpr)).setType(definitions.UnitTpe)
+                      assignUnitType(treeCopy.Block(blk, thenStats, branchWithAssign(thenExpr)))
                     case _ =>
-                      typedAssign(t)
+                      typedAssign(t, varDef.symbol)
                   }
                 }
-                val ifWithAssign = treeCopy.If(tree, cond, branchWithAssign(thenp), branchWithAssign(elsep)).setType(definitions.UnitTpe)
+                val ifWithAssign = assignUnitType(treeCopy.If(tree, cond, branchWithAssign(thenp), branchWithAssign(elsep)))
                 stats :+ varDef :+ ifWithAssign :+ atPos(tree.pos)(gen.mkAttributedStableRef(varDef.symbol)).setType(tree.tpe)
               }
             case ld @ LabelDef(name, params, rhs) =>
-              if (isUnitType(ld.symbol.info.resultType))
-                statsExprUnit
-              else
-                stats :+ expr
+              if (isUnitType(ld.symbol.info.resultType)) statsExprUnit
+              else stats :+ expr
 
             case Match(scrut, cases) =>
               // if type of match is Unit don't introduce assignment,
               // but add Unit value to bring it into form expected by async transform
-              if (expr.tpe =:= definitions.UnitTpe) {
+              if (typeEqualsUnit(expr.tpe)) {
                 statsExprUnit
-              } else if (expr.tpe =:= definitions.NothingTpe) {
+              } else if (typeEqualsNothing(expr.tpe)) {
                 statsExprThrow
               } else {
                 val varDef = defineVar(name.matchRes(), expr.tpe, tree.pos)
-                def typedAssign(lhs: Tree) =
-                  typedAt(lhs.pos, Assign(Ident(varDef.symbol), mkAttributedCastPreservingAnnotations(lhs, tpe(varDef.symbol))))
                 val casesWithAssign = cases map {
                   case cd@CaseDef(pat, guard, body) =>
                     def bodyWithAssign(t: Tree): Tree = {
                       t match {
                         case MatchEnd(ld) => deriveLabelDef(ld, bodyWithAssign)
-                        case b@Block(caseStats, caseExpr) => treeCopy.Block(b, caseStats, bodyWithAssign(caseExpr)).setType(definitions.UnitTpe)
-                        case _ => typedAssign(t)
+                        case b@Block(caseStats, caseExpr) => assignUnitType(treeCopy.Block(b, caseStats, bodyWithAssign(caseExpr)))
+                        case _ => typedAssign(t, varDef.symbol)
                       }
                     }
-                    treeCopy.CaseDef(cd, pat, guard, bodyWithAssign(body)).setType(definitions.UnitTpe)
+                    assignUnitType(treeCopy.CaseDef(cd, pat, guard, bodyWithAssign(body)))
                 }
-                val matchWithAssign = treeCopy.Match(tree, scrut, casesWithAssign).setType(definitions.UnitTpe)
+                val matchWithAssign = assignUnitType(treeCopy.Match(tree, scrut, casesWithAssign))
                 require(matchWithAssign.tpe != null, matchWithAssign)
                 stats :+ varDef :+ matchWithAssign :+ atPos(tree.pos)(gen.mkAttributedStableRef(varDef.symbol)).setType(tree.tpe)
               }
@@ -176,7 +159,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
       def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
         val sym = currentOwner.newTermSymbol(name, pos, SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
-        internal.valDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
+        valDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
       }
 
       object _anf {
@@ -322,7 +305,6 @@ private[async] trait AnfTransform extends TransformUtils {
       //   - rewrite the terminal label def to take no parameters, and instead read this temp variable
       //   - change jumps to the terminal label to an assignment and a no-arg label application
       def eliminateMatchEndLabelParameter(statsExpr: List[Tree]): List[Tree] = {
-        import internal.{methodType, setInfo}
         val caseDefToMatchResult = collection.mutable.Map[Symbol, Symbol]()
 
         val matchResults = collection.mutable.Buffer[Tree]()
@@ -346,7 +328,7 @@ private[async] trait AnfTransform extends TransformUtils {
               val rhs2 = ld.rhs.substituteSymbols(param.symbol :: Nil, matchResult.symbol :: Nil)
               (treeCopy.LabelDef(ld, ld.name, Nil, typed(literalUnit)), rhs2)
             }
-          setInfo(ld.symbol, methodType(Nil, definitions.UnitTpe))
+          setUnitMethodInfo(ld.symbol)
           ld2
         }
         val statsExpr0 = statsExpr.reverse.flatMap {

@@ -66,8 +66,9 @@ trait LiveVariables extends ExprBuilder {
 
     // determine which fields should be live also at the end (will not be nulled out)
     val noNull: Set[Symbol] = liftedSyms.filter { sym =>
-      val typeSym = tpe(sym).typeSymbol
-      (typeSym.isClass && (typeSym.asClass.isPrimitive || typeSym == definitions.NothingClass)) || liftables.exists { tree =>
+      val tp = tpe(sym)
+      val tpSym = tp.typeSymbol
+      (tpSym.isClass && (tpSym.asClass.isPrimitive || typeEqualsNothing(tp))) || liftables.exists { tree =>
         !liftedSyms.contains(tree.symbol) && tree.exists(_.symbol == sym)
       }
     }

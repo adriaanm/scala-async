@@ -34,10 +34,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     cleanupContainsAwaitAttachments(anfTree)
     containsAwait = containsAwaitCached(anfTree)
 
-    val applyDefDefDummyBody: DefDef = {
-      val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), name.tr, TypeTree(futureSystemOps.tryType[Any]), EmptyTree)))
-      DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
-    }
+    val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(futureSystemOps.tryType[Any])
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     val stateMachine: ClassDef = {
@@ -46,27 +43,19 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
         val resultAndAccessors = mkMutableField(futureSystemOps.promType[T](uncheckedBoundsResultTag), name.result, futureSystemOps.createProm[T](uncheckedBoundsResultTag).tree)
         val execContextValDef = ValDef(NoMods, name.execContext, TypeTree(), execContext)
 
-        val apply0DefDef: DefDef = {
-          // We extend () => Unit so we can pass this class as the by-name argument to `Future.apply`.
-          // See SI-1247 for the the optimization that avoids creation.
-          DefDef(NoMods, name.apply, Nil, Nil, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
-        }
         List(emptyConstructor, stateVar) ++ resultAndAccessors ++ List(execContextValDef) ++ List(applyDefDefDummyBody, apply0DefDef)
       }
 
       val customParents = futureSystemOps.stateMachineClassParents
-      val tycon = if (customParents.forall(_.typeSymbol.asClass.isTrait)) {
-        // prefer extending a class to reduce the class file size of the state machine.
-        symbolOf[scala.runtime.AbstractFunction1[Any, Any]]
-      } else {
-        // ... unless a custom future system already extends some class
-        symbolOf[scala.Function1[Any, Any]]
-      }
-      val tryToUnit = appliedType(tycon, futureSystemOps.tryType[Any], typeOf[Unit])
-      val template = Template((futureSystemOps.stateMachineClassParents ::: List(tryToUnit, typeOf[() => Unit])).map(TypeTree(_)), emptyValDef, body)
+      // prefer extending a class to reduce the class file size of the state machine.
+      // ... unless a custom future system already extends some class
+      val useClass = customParents.forall(_.typeSymbol.asClass.isTrait)
 
-      val t = ClassDef(NoMods, name.stateMachineT, Nil, template)
-      typecheckClassDef(t)
+      // We extend () => Unit so we can pass this class as the by-name argument to `Future.apply`.
+      // See SI-1247 for the the optimization that avoids creation.
+      val funParents = List(function1ToUnit(futureSystemOps.tryType[Any], useClass), function0ToUnit)
+
+      typecheckClassDef(ClassDef(NoMods, name.stateMachineT, Nil, Template((customParents ::: funParents).map(TypeTree(_)), emptyValDef, body)))
     }
 
     val stateMachineClass = stateMachine.symbol
@@ -85,10 +74,9 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       val assigns = flds.map { fld =>
         val fieldSym = fld.symbol
         val assign = Assign(gen.mkAttributedStableRef(thisType(fieldSym.owner), fieldSym), mkZero(fieldSym.info))
-        asyncBase.nullOut(c.universe)(c.Expr[String](Literal(Constant(fieldSym.name.toString))), c.Expr[Any](Ident(fieldSym))).tree match {
-          case Literal(Constant(value: Unit)) => assign
-          case x => Block(x :: Nil, assign)
-        }
+        val nulled = asyncBase.nullOut(c.universe)(c.Expr[String](Literal(Constant(fieldSym.name.toString))), c.Expr[Any](Ident(fieldSym))).tree
+        if (isLiteralUnit(nulled)) assign
+        else Block(nulled :: Nil, assign)
       }
       val asyncState = asyncBlock.asyncStates.find(_.state == state).get
       asyncState.stats = assigns ++ asyncState.stats
@@ -169,12 +157,12 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       case ValDef(_, _, _, rhs) if liftedSyms(tree.symbol) =>
         api.atOwner(api.currentOwner) {
           val fieldSym = tree.symbol
-          if (fieldSym.asTerm.isLazy) Literal(Constant(()))
+          if (fieldSym.asTerm.isLazy) literalUnit
           else {
             val lhs = atPos(tree.pos) {
               gen.mkAttributedStableRef(thisType(fieldSym.owner.asClass), fieldSym)
             }
-            treeCopy.Assign(tree, lhs, api.recur(rhs)).setType(definitions.UnitTpe).changeOwner(fieldSym, api.currentOwner)
+            assignUnitType(treeCopy.Assign(tree, lhs, api.recur(rhs))).changeOwner(fieldSym, api.currentOwner)
           }
         }
       case _: DefTree if liftedSyms(tree.symbol)           =>
@@ -222,7 +210,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
   }
 
   def typecheckClassDef(cd: ClassDef): ClassDef = {
-    val Block(cd1 :: Nil, _) = typingTransform(atPos(macroPos)(Block(cd :: Nil, Literal(Constant(())))))(
+    val Block(cd1 :: Nil, _) = typingTransform(atPos(macroPos)(Block(cd :: Nil, literalUnit)))(
       (tree, api) =>
         api.typecheck(tree)
     )

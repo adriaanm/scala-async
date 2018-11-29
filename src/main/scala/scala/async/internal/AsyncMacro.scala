@@ -39,6 +39,8 @@ private[async] trait AsyncContext {
   val macroPos: c.universe.Position
   val asyncBase: AsyncBase
 
+  def emitTryCatch: Boolean = asyncBase.futureSystem.emitTryCatch
+
   // TODO does need to be a var??
   var containsAwait: c.Tree => Boolean
 }
