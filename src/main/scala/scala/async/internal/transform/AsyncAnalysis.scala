@@ -4,11 +4,9 @@
 
 package scala.async.internal.transform
 
-import scala.async.internal.AsyncMacro
 import scala.collection.mutable.ListBuffer
 
-trait AsyncAnalysis {
-  self: AsyncMacro =>
+trait AsyncAnalysis extends TransformUtils  {
 
   import c.universe._
 

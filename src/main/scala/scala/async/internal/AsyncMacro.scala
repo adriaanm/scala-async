@@ -32,16 +32,17 @@ object AsyncMacro {
   }
 }
 
-private[async] trait AsyncMacro
-  extends AnfTransform with TransformUtils with Lifter
-  with ExprBuilder with AsyncTransform with AsyncAnalysis with LiveVariables {
-
+private[async] trait AsyncContext {
   val c: scala.reflect.macros.Context
   val body: c.Tree
-  var containsAwait: c.Tree => Boolean
   val asyncNames: AsyncNames[c.universe.type]
+  val macroPos: c.universe.Position
+  val asyncBase: AsyncBase
 
+  // TODO does need to be a var??
+  var containsAwait: c.Tree => Boolean
+}
+
+private[async] trait AsyncMacro extends AsyncTransform {
   lazy val macroPos: c.universe.Position = c.macroApplication.pos.makeTransparent
-  def atMacroPos(t: c.Tree): c.Tree = c.universe.atPos(macroPos)(t)
-
 }

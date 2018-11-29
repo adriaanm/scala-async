@@ -4,10 +4,9 @@
 
 package scala.async.internal.transform
 
-import scala.async.internal.{AsyncBase, AsyncMacro}
+import scala.async.internal.AsyncBase
 
-trait AsyncTransform {
-  self: AsyncMacro =>
+trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
 
   import c.internal._
   import c.universe._

@@ -4,11 +4,9 @@
 
 package scala.async.internal.transform
 
-import scala.async.internal.AsyncMacro
 import scala.collection.mutable
 
-trait Lifter {
-  self: AsyncMacro =>
+trait Lifter extends ExprBuilder {
   import c.universe._
   import Flag._
   import c.internal._

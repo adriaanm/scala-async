@@ -3,7 +3,7 @@
  */
 package scala.async.internal.transform
 
-import scala.async.internal.AsyncMacro
+import scala.async.internal.AsyncContext
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -11,8 +11,9 @@ import scala.collection.mutable.ListBuffer
 /**
  * Utilities used in both `ExprBuilder` and `AnfTransform`.
  */
-private[async] trait TransformUtils {
-  self: AsyncMacro =>
+private[async] trait TransformUtils extends AsyncContext {
+
+  def atMacroPos(t: c.Tree): c.Tree = c.universe.atPos(macroPos)(t)
 
   import c.internal._
   import c.universe._
@@ -34,6 +35,11 @@ private[async] trait TransformUtils {
   def newBlock(stats: List[Tree], expr: Tree): Block = {
     Block(stats, expr)
   }
+
+  def literalNull = Literal(Constant(null))
+
+  def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
+  def literalUnit = Literal(Constant(())) // a def to avoid sharing trees
 
   def isLiteralUnit(t: Tree) = t match {
     case Literal(Constant(())) =>

@@ -6,18 +6,17 @@ package scala.async.internal.transform
 
 import java.util.function.IntUnaryOperator
 
-import scala.async.internal.{AsyncMacro, FutureSystem}
+import scala.async.internal.FutureSystem
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-trait ExprBuilder {
-  builder: AsyncMacro =>
+trait ExprBuilder extends TransformUtils {
 
   import c.internal._
   import c.universe._
 
   val futureSystem: FutureSystem
-  val futureSystemOps: futureSystem.Ops { val c: builder.c.type }
+  val futureSystemOps: futureSystem.Ops { val c: ExprBuilder.this.c.type }
 
   val stateAssigner  = new StateAssigner
   val labelDefStates = collection.mutable.Map[Symbol, Int]()
@@ -633,12 +632,10 @@ trait ExprBuilder {
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
 
-  def literalUnit = Literal(Constant(())) // a def to avoid sharing trees
 
   def toList(tree: Tree): List[Tree] = tree match {
     case Block(stats, Literal(Constant(value))) if value == () => stats
     case _ => tree :: Nil
   }
 
-  def literalNull = Literal(Constant(null))
 }

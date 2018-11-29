@@ -6,12 +6,10 @@ package scala.async.internal.transform
 
 import java.util.function.IntConsumer
 
-import scala.async.internal.AsyncMacro
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
-trait LiveVariables {
-  self: AsyncMacro =>
+trait LiveVariables extends ExprBuilder {
   import c.universe._
   import Flag._
 
