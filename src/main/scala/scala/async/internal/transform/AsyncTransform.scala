@@ -208,7 +208,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
   }
 
   def typecheckClassDef(cd: ClassDef): ClassDef = {
-    val Block(cd1 :: Nil, _) = typingTransform(atPos(macroPos)(Block(cd :: Nil, literalUnit)))(
+    val Block(cd1 :: Nil, _) = typingTransform(atMacroPos(Block(cd :: Nil, literalUnit)))(
       (tree, api) =>
         api.typecheck(tree)
     )

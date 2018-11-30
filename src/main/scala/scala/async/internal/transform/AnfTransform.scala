@@ -52,7 +52,7 @@ private[async] trait AnfTransform extends TransformUtils {
       def typedAt(exprPos: Position, tree: Tree) = api.typecheck(atPos(exprPos)(tree))
 
       def typedAssign(lhs: Tree, varSym: Symbol) =
-        typedAt(lhs.pos, Assign(Ident(varSym), mkAttributedCastPreservingAnnotations(lhs, tpe(varSym))))
+        typedAt(lhs.pos, Assign(Ident(varSym), mkAttributedCastPreservingAnnotations(lhs, varSym.info)))
 
       object linearize {
         def transformToList(tree: Tree): List[Tree] = {
@@ -159,6 +159,8 @@ private[async] trait AnfTransform extends TransformUtils {
       }
 
       object _anf {
+        import treeInfo.Applied // TODO: do we need to full generality (esp. after erasure, probably not)
+
         def transformToList(tree: Tree): List[Tree] = {
           mode = Anf; blockToList(api.recur(tree))
         }

@@ -121,7 +121,7 @@ trait Lifter extends ExprBuilder {
             sym.setName(name.fresh(sym.name.toTermName))
             sym.setInfo(sym.info.deconst)
             val rhs1 = if (sym.asTerm.isLazy) rhs else EmptyTree
-            treeCopy.ValDef(vd, Modifiers(sym.flags), sym.name, TypeTree(tpe(sym)).setPos(t.pos), rhs1)
+            treeCopy.ValDef(vd, Modifiers(sym.flags), sym.name, TypeTree(sym.info).setPos(t.pos), rhs1)
           case dd@DefDef(_, _, tparams, vparamss, tpt, rhs) =>
             sym.setName(this.name.freshen(sym.name.toTermName))
             sym.setFlag(PRIVATE | LOCAL)

@@ -6,6 +6,7 @@ package scala.async.internal.transform
 import scala.async.internal.{AsyncBase, AsyncNames}
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.reflect.internal.Flags
 import scala.reflect.macros.{Aliases, Internals}
 
 private[async] trait AsyncContext {
@@ -23,27 +24,14 @@ private[async] trait AsyncContext {
   // TODO does need to be a var??
   var containsAwait: Tree => Boolean
 
-  //  def Expr[T: WeakTypeTag](tree: Tree): Expr[T]
-}
-
-/**
- * Utilities used in both `ExprBuilder` and `AnfTransform`.
- */
-private[async] trait TransformUtils extends AsyncContext {
-  import u._
-
-  def typecheck(tree: Tree): Tree
+  // macro context interface -- the rest is meant to be independent of our being a macro (planning to move async into the compiler)
   def abort(pos: Position, msg: String): Nothing
   def error(pos: Position, msg: String): Unit
+  def typecheck(tree: Tree): Tree
   val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
-
-  import typingTransformers.{TypingTransformApi, typingTransform}
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
   def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
-
-
-  def atMacroPos(t: Tree): Tree = atPos(macroPos)(t)
 
   lazy val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
     val names = new AsyncNames[u.type](u)
@@ -55,17 +43,14 @@ private[async] trait TransformUtils extends AsyncContext {
     def fresh(name: TermName): TermName = freshenIfNeeded(name)
     def fresh(name: String): String = currentFreshNameCreator.newName(name) // TODO ok? was c.freshName
   }
+}
 
-  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) =
-    if (emitTryCatch) Try(block, catches, finalizer) else block
+// Logic sensitive to where we are in the pipeline
+// (intend to move the transformation as late as possible, to avoid lugging all these trees around)
+trait PhasedTransform extends AsyncContext {
+  import u._
 
-  lazy val IllegalStateExceptionClass = rootMirror.staticClass("java.lang.IllegalStateException")
-
-  private lazy val Async_async   = asyncBase.asyncMethod(u)(asyncMacroSymbol)
-  private lazy val Async_await   = asyncBase.awaitMethod(u)(asyncMacroSymbol)
-
-  def isAsync(fun: Tree) = fun.symbol == Async_async
-  def isAwait(fun: Tree) = fun.symbol == Async_await
+  def atMacroPos(t: Tree): Tree = atPos(macroPos)(t)
 
   def literalNull = Literal(Constant(null))
 
@@ -78,6 +63,7 @@ private[async] trait TransformUtils extends AsyncContext {
   def setUnitMethodInfo(sym: Symbol): sym.type = internal.setInfo(sym, MethodType(Nil, definitions.UnitTpe))
 
   def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
+  def isNothingClass(sym: Symbol) = sym == definitions.NothingClass
 
   def literalUnit = Literal(Constant(())) // a def to avoid sharing trees
 
@@ -140,68 +126,75 @@ private[async] trait TransformUtils extends AsyncContext {
         adaptToUnit(stats)
     }
 
-  // Copy pasted from TreeInfo in the compiler.
-  // Using a quasiquote pattern like `case q"$fun[..$targs](...$args)" => is not
-  // sufficient since https://github.com/scala/scala/pull/3656 as it doesn't match
-  // constructor invocations.
-  private class Applied(val tree: Tree) {
-    /** The tree stripped of the possibly nested applications.
-     *  The original tree if it's not an application.
-     */
-    def callee: Tree = {
-      def loop(tree: Tree): Tree = tree match {
-        case Apply(fn, _) => loop(fn)
-        case tree         => tree
-      }
-      loop(tree)
-    }
 
-    /** The `callee` unwrapped from type applications.
-     *  The original `callee` if it's not a type application.
-     */
-    def core: Tree = callee match {
-      case TypeApply(fn, _)       => fn
-      case AppliedTypeTree(fn, _) => fn
-      case tree                   => tree
-    }
 
-    /** The type arguments of the `callee`.
-     *  `Nil` if the `callee` is not a type application.
-     */
-    def targs: List[Tree] = callee match {
-      case TypeApply(_, args)       => args
-      case AppliedTypeTree(_, args) => args
-      case _                        => Nil
-    }
+  private def derivedValueClassUnbox(cls: Symbol) =
+    (cls.info.decls.find(sym => sym.isMethod && sym.asTerm.isParamAccessor) getOrElse NoSymbol)
 
-    /** (Possibly multiple lists of) value arguments of an application.
-     *  `Nil` if the `callee` is not an application.
-     */
-    def argss: List[List[Tree]] = {
-      def loop(tree: Tree): List[List[Tree]] = tree match {
-        case Apply(fn, args) => loop(fn) :+ args
-        case _               => Nil
-      }
-      loop(tree)
+  def mkZero(tp: Type): Tree = {
+    val tpSym = tp.typeSymbol
+    if (tpSym.isClass && tpSym.asClass.isDerivedValueClass) {
+      val argZero = mkZero(derivedValueClassUnbox(tpSym).infoIn(tp).resultType)
+      val baseType = tp.baseType(tpSym) // use base type here to dealias / strip phantom "tagged types" etc.
+
+      // By explicitly attributing the types and symbols here, we subvert privacy.
+      // Otherwise, ticket86PrivateValueClass would fail.
+
+      // Approximately:
+      // q"new ${valueClass}[$..targs](argZero)"
+      val target: Tree = gen.mkAttributedSelect(
+                                                 typecheck(atMacroPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
+
+      val zero = gen.mkMethodCall(target, argZero :: Nil)
+      // restore the original type which we might otherwise have weakened with `baseType` above
+      typecheck(atMacroPos(gen.mkCast(zero, tp)))
+    } else {
+      gen.mkZero(tp)
     }
   }
 
+  // TODO: when we run after erasure the annotation is not needed
+  final def uncheckedBounds(tp: Type): Type = u.uncheckedBounds(tp)
 
-  /** Destructures applications into important subparts described in `Applied` class,
-   *  namely into: core, targs and argss (in the specified order).
-   *
-   *  Trees which are not applications are also accepted. Their callee and core will
-   *  be equal to the input, while targs and argss will be Nil.
-   *
-   *  The provided extractors don't expose all the API of the `Applied` class.
-   *  For advanced use, call `dissectApplied` explicitly and use its methods instead of pattern matching.
-   */
-  object Applied {
-    def unapply(tree: Tree): Option[(Tree, List[Tree], List[List[Tree]])] = {
-      val applied = new Applied(tree)
-      Some((applied.core, applied.targs, applied.argss))
+  def uncheckedBoundsIfNeeded(t: Type): Type = {
+    var quantified: List[Symbol] = Nil
+    var badSkolemRefs: List[Symbol] = Nil
+    t.foreach {
+      case et: ExistentialType =>
+        quantified :::= et.quantified
+      case TypeRef(pre, sym, args) =>
+        val illScopedSkolems = args.map(_.typeSymbol).filter(arg => arg.isExistentialSkolem && !quantified.contains(arg))
+        badSkolemRefs :::= illScopedSkolems
+      case _ =>
+    }
+    if (badSkolemRefs.isEmpty) t
+    else t.map {
+      case tp @ TypeRef(pre, sym, args) if args.exists(a => badSkolemRefs.contains(a.typeSymbol)) =>
+        uncheckedBounds(tp)
+      case t => t
     }
   }
+}
+
+
+/**
+ * Utilities used in both `ExprBuilder` and `AnfTransform`.
+ */
+private[async] trait TransformUtils extends AsyncContext with PhasedTransform {
+  import u._
+  import typingTransformers.{TypingTransformApi, typingTransform}
+
+
+  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) =
+    if (emitTryCatch) Try(block, catches, finalizer) else block
+
+  lazy val IllegalStateExceptionClass = rootMirror.staticClass("java.lang.IllegalStateException")
+
+  private lazy val Async_async   = asyncBase.asyncMethod(u)(asyncMacroSymbol)
+  private lazy val Async_await   = asyncBase.awaitMethod(u)(asyncMacroSymbol)
+
+  def isAsync(fun: Tree) = fun.symbol == Async_async
+  def isAwait(fun: Tree) = fun.symbol == Async_await
 
 
   private lazy val Boolean_ShortCircuits: Set[Symbol] = {
@@ -382,43 +375,11 @@ private[async] trait TransformUtils extends AsyncContext {
   }
 
 
-  def tpe(sym: Symbol): Type = {
-    if (sym.isType) sym.asType.toType
-    else sym.info
-  }
-
   def thisType(sym: Symbol): Type = {
     if (sym.isClass) sym.asClass.thisPrefix
     else NoPrefix
   }
 
-  private def derivedValueClassUnbox(cls: Symbol) =
-    (cls.info.decls.find(sym => sym.isMethod && sym.asTerm.isParamAccessor) getOrElse NoSymbol)
-
-  def mkZero(tp: Type): Tree = {
-    val tpSym = tp.typeSymbol
-    if (tpSym.isClass && tpSym.asClass.isDerivedValueClass) {
-      val argZero = mkZero(derivedValueClassUnbox(tpSym).infoIn(tp).resultType)
-      val baseType = tp.baseType(tpSym) // use base type here to dealias / strip phantom "tagged types" etc.
-
-      // By explicitly attributing the types and symbols here, we subvert privacy.
-      // Otherwise, ticket86PrivateValueClass would fail.
-
-      // Approximately:
-      // q"new ${valueClass}[$..targs](argZero)"
-      val target: Tree = gen.mkAttributedSelect(
-        typecheck(atMacroPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
-
-      val zero = gen.mkMethodCall(target, argZero :: Nil)
-      // restore the original type which we might otherwise have weakened with `baseType` above
-      typecheck(atMacroPos(gen.mkCast(zero, tp)))
-    } else {
-      gen.mkZero(tp)
-    }
-  }
-
-  // TODO: when we run after erasure the annotation is not needed
-  final def uncheckedBounds(tp: Type): Type = u.uncheckedBounds(tp)
 
   /**
    * Efficiently decorate each subtree within `t` with the result of `t exists isAwait`,
@@ -540,31 +501,8 @@ private[async] trait TransformUtils extends AsyncContext {
     }
   }
 
-  private def isExistentialSkolem(s: Symbol) = {
-    val EXISTENTIAL: Long = 1L << 35
-    internal.isSkolem(s) && (internal.flags(s).asInstanceOf[Long] & EXISTENTIAL) != 0
-  }
   private def isCaseTempVal(s: Symbol) = {
     s.isTerm && s.asTerm.isVal && s.isSynthetic && s.name.toString.startsWith("x")
-  }
-
-  def uncheckedBoundsIfNeeded(t: Type): Type = {
-    var quantified: List[Symbol] = Nil
-    var badSkolemRefs: List[Symbol] = Nil
-    t.foreach {
-      case et: ExistentialType =>
-        quantified :::= et.quantified
-      case TypeRef(pre, sym, args) =>
-        val illScopedSkolems = args.map(_.typeSymbol).filter(arg => isExistentialSkolem(arg) && !quantified.contains(arg))
-        badSkolemRefs :::= illScopedSkolems
-      case _ =>
-    }
-    if (badSkolemRefs.isEmpty) t
-    else t.map {
-      case tp @ TypeRef(pre, sym, args) if args.exists(a => badSkolemRefs.contains(a.typeSymbol)) =>
-        uncheckedBounds(tp)
-      case t => t
-    }
   }
 
 
