@@ -7,6 +7,7 @@ package scala.async.internal
 import language.experimental.macros
 import scala.reflect.macros.Context
 import scala.reflect.api.Universe
+import scala.reflect.internal.SymbolTable
 
 object AsyncId extends AsyncBase {
   lazy val futureSystem = IdentityFutureSystem
@@ -51,9 +52,10 @@ object IdentityFutureSystem extends FutureSystem {
   type ExecContext = Unit
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(c0: Context): Ops {val c: c0.type} = new Ops {
-    val c: c0.type = c0
-    import c.universe._
+  def mkOps(c0: Context): Ops { val c: c0.type } = new Ops {
+    val c: c0.type { val universe: u.type} = c0.asInstanceOf[c0.type { val universe: u.type}]
+    val u = c0.universe.asInstanceOf[SymbolTable]
+    import u._
 
     def execContext: Expr[ExecContext] = c.Expr[Unit](Literal(Constant(())))
 

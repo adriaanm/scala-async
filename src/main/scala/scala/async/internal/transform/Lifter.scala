@@ -7,10 +7,8 @@ package scala.async.internal.transform
 import scala.collection.mutable
 
 trait Lifter extends ExprBuilder {
-  import c.universe._
+  import u._
   import Flag._
-  import c.internal._
-  import decorators._
 
   /**
    * Identify which DefTrees are used (including transitively) which are declared
@@ -121,7 +119,7 @@ trait Lifter extends ExprBuilder {
           case vd@ValDef(_, _, tpt, rhs)                    =>
             sym.setFlag(MUTABLE | STABLE | PRIVATE | LOCAL)
             sym.setName(name.fresh(sym.name.toTermName))
-            sym.setInfo(deconst(sym.info))
+            sym.setInfo(sym.info.deconst)
             val rhs1 = if (sym.asTerm.isLazy) rhs else EmptyTree
             treeCopy.ValDef(vd, Modifiers(sym.flags), sym.name, TypeTree(tpe(sym)).setPos(t.pos), rhs1)
           case dd@DefDef(_, _, tparams, vparamss, tpt, rhs) =>

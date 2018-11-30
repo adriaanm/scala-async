@@ -4,6 +4,7 @@
 package scala.async.internal
 
 import scala.language.higherKinds
+import scala.reflect.internal.SymbolTable
 import scala.reflect.macros.Context
 
 /**
@@ -27,8 +28,9 @@ trait FutureSystem {
   type Tryy[T]
 
   trait Ops {
-    val c: Context
-    import c.universe._
+    protected val c: Context { val universe: u.type}
+    val u: SymbolTable
+    import u._
 
     def promType[A: WeakTypeTag]: Type
     def tryType[A: WeakTypeTag]: Type
@@ -94,9 +96,10 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   type ExecContext = ExecutionContext
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(c0: Context): Ops {val c: c0.type} = new Ops {
-    val c: c0.type = c0
-    import c.universe._
+  def mkOps(c0: Context): Ops { val c: c0.type } = new Ops {
+    val c: c0.type { val universe: u.type} = c0.asInstanceOf[c0.type { val universe: u.type}]
+    val u = c0.universe.asInstanceOf[SymbolTable]
+    import u._
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
     def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]

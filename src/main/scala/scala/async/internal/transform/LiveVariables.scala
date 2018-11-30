@@ -10,7 +10,7 @@ import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 trait LiveVariables extends ExprBuilder {
-  import c.universe._
+  import u._
   import Flag._
 
   /**

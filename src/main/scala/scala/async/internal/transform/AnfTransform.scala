@@ -4,18 +4,14 @@
 
 package scala.async.internal.transform
 
-import scala.Predef._
-import scala.reflect.internal.util.Collections.map2
-
 private[async] trait AnfTransform extends TransformUtils {
-  import c.universe._
+  import u._
   import Flag._
-  import c.internal.{decorators, gen, typingTransform, valDef}
-  import decorators._
+  import typingTransformers.{TypingTransformApi, typingTransform}
 
   def anfTransform(tree: Tree, owner: Symbol): Block = {
     // Must prepend the () for issue #31.
-    val block = c.typecheck(atPos(tree.pos)(newBlock(List(literalUnit), tree))).setType(tree.tpe)
+    val block = typecheck(atPos(tree.pos)(Block(List(literalUnit), tree))).setType(tree.tpe)
 
     sealed abstract class AnfMode
     case object Anf extends AnfMode
@@ -48,7 +44,7 @@ private[async] trait AnfTransform extends TransformUtils {
     }
 
     // creates a subclass of TypingTransformer
-    c.internal.typingTransform(tree1, owner)((tree, api) => {
+    typingTransform(tree1, owner)((tree, api) => {
       import api.{atOwner, currentOwner}
 
       // localTyper
@@ -71,7 +67,7 @@ private[async] trait AnfTransform extends TransformUtils {
             stats :+ expr :+ typedAt(expr.pos, literalUnit)
           }
           def statsExprThrow =
-            stats :+ expr :+ typedAt(expr.pos, Throw(Apply(Select(New(gen.mkAttributedRef(defn.IllegalStateExceptionClass)), nme.CONSTRUCTOR), Nil)))
+            stats :+ expr :+ typedAt(expr.pos, Throw(Apply(Select(New(gen.mkAttributedRef(IllegalStateExceptionClass)), nme.CONSTRUCTOR), Nil)))
           expr match {
             case Apply(fun, args) if isAwait(fun) =>
               val valDef = defineVal(name.await(), expr, tree.pos)
@@ -153,13 +149,13 @@ private[async] trait AnfTransform extends TransformUtils {
 
         def defineVar(name: TermName, tp: Type, pos: Position): ValDef = {
           val sym = currentOwner.newTermSymbol(name, pos, MUTABLE | SYNTHETIC).setInfo(uncheckedBounds(tp))
-          valDef(sym, mkZero(uncheckedBounds(tp))).setType(NoType).setPos(pos)
+          ValDef(sym, mkZero(uncheckedBounds(tp))).setType(NoType).setPos(pos)
         }
       }
 
       def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
         val sym = currentOwner.newTermSymbol(name, pos, SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
-        valDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
+        ValDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
       }
 
       object _anf {
@@ -244,7 +240,7 @@ private[async] trait AnfTransform extends TransformUtils {
             case ValDef(mods, name, tpt, rhs) =>
               if (containsAwait(rhs)) {
                 val stats :+ expr = atOwner(currentOwner.owner)(linearize.transformToList(rhs))
-                stats.foreach(_.changeOwner(currentOwner, currentOwner.owner))
+                stats.foreach(_.changeOwner((currentOwner, currentOwner.owner)))
                 stats :+ treeCopy.ValDef(tree, mods, name, tpt, expr)
               } else List(tree)
 
@@ -281,7 +277,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
             case LabelDef(name, params, rhs) =>
               if (isUnitType(tree.symbol.info))
-                List(treeCopy.LabelDef(tree, name, params, typed(newBlock(linearize.transformToList(rhs), literalUnit))).setSymbol(tree.symbol))
+                List(treeCopy.LabelDef(tree, name, params, typed(Block(linearize.transformToList(rhs), literalUnit))).setSymbol(tree.symbol))
               else
                 List(treeCopy.LabelDef(tree, name, params, typed(listToBlock(linearize.transformToList(rhs)))).setSymbol(tree.symbol))
 
@@ -349,12 +345,12 @@ private[async] trait AnfTransform extends TransformUtils {
                 case Apply(fun, arg :: Nil) if isLabel(fun.symbol) && caseDefToMatchResult.contains(fun.symbol) =>
                   val temp = caseDefToMatchResult(fun.symbol)
                   if (temp == NoSymbol)
-                    typedPos(tree.pos)(newBlock(transform(arg) :: Nil, treeCopy.Apply(tree, fun, Nil)))
+                    typedPos(tree.pos)(Block(transform(arg) :: Nil, treeCopy.Apply(tree, fun, Nil)))
                   else
                     // setType needed for LateExpansion.shadowingRefinedType test case. There seems to be an inconsistency
                     // in the trees after pattern matcher.
                     // TODO miminize the problem in patmat and fix in scalac.
-                    typedPos(tree.pos)(newBlock(Assign(Ident(temp), transform(internal.setType(arg, fun.tpe.paramLists.head.head.info))) :: Nil, treeCopy.Apply(tree, fun, Nil)))
+                    typedPos(tree.pos)(Block(Assign(Ident(temp), transform(internal.setType(arg, fun.tpe.paramLists.head.head.info))) :: Nil, treeCopy.Apply(tree, fun, Nil)))
                 case Block(stats, expr: Apply) if isLabel(expr.symbol) =>
                   superTransform match {
                     case Block(stats0, Block(stats1, expr1)) =>
@@ -376,7 +372,7 @@ private[async] trait AnfTransform extends TransformUtils {
           case r1 :: Nil =>
             // { var matchRes = _; ....; matchRes }
             (r1 +: statsExpr0.reverse) :+ atPos(tree.pos)(gen.mkAttributedIdent(r1.symbol))
-          case _ => c.error(macroPos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
+          case _ => error(macroPos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
         }
       }
 

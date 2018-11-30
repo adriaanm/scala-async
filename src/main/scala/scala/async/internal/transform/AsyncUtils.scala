@@ -5,8 +5,6 @@
 package scala.async.internal.transform
 
 object AsyncUtils {
-
-
   private def enabled(level: String) = sys.props.getOrElse(s"scala.async.$level", "false").equalsIgnoreCase("true")
 
   private[async] val verbose = enabled("debug")

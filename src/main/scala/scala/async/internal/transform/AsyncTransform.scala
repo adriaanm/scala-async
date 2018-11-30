@@ -7,10 +7,8 @@ package scala.async.internal.transform
 import scala.async.internal.AsyncBase
 
 trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
-
-  import c.internal._
-  import c.universe._
-  import decorators._
+  import u._
+  import typingTransformers.{TypingTransformApi, typingTransform}
 
   val asyncBase: AsyncBase
 
@@ -20,14 +18,14 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
     // This implicit propagates the annotated type in the type tag.
-    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = c.WeakTypeTag[T](uncheckedBounds(resultType.tpe))
+    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(resultType.tpe))
 
     reportUnsupportedAwaits(body)
 
     // Transform to A-normal form:
     //  - no await calls in qualifiers or arguments,
     //  - if/match only used in statement position.
-    val anfTree0: Block = anfTransform(body, c.internal.enclosingOwner)
+    val anfTree0: Block = anfTransform(body, enclosingOwner)
 
     val anfTree = futureSystemOps.postAnfTransform(anfTree0)
 
@@ -74,7 +72,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       val assigns = flds.map { fld =>
         val fieldSym = fld.symbol
         val assign = Assign(gen.mkAttributedStableRef(thisType(fieldSym.owner), fieldSym), mkZero(fieldSym.info))
-        val nulled = asyncBase.nullOut(c.universe)(c.Expr[String](Literal(Constant(fieldSym.name.toString))), c.Expr[Any](Ident(fieldSym))).tree
+        val nulled = asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
         if (isLiteralUnit(nulled)) assign
         else Block(nulled :: Nil, assign)
       }
@@ -96,7 +94,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
         ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil)),
         futureSystemOps.spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))
       ),
-      futureSystemOps.promiseToFuture(c.Expr[futureSystem.Prom[T]](selectStateMachine(name.result))).tree)
+      futureSystemOps.promiseToFuture(Expr[futureSystem.Prom[T]](selectStateMachine(name.result))).tree)
     }
 
     val isSimple = asyncBlock.asyncStates.size == 1
@@ -121,7 +119,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     }
 
     AsyncUtils.vprintln(s"In file '$location':")
-    AsyncUtils.vprintln(s"${c.macroApplication}")
+    AsyncUtils.vprintln(s"${asyncMacroSymbol}")
     AsyncUtils.vprintln(s"ANF transform expands to:\n $anfTree")
     states foreach (s => AsyncUtils.vprintln(s))
     AsyncUtils.vprintln("===== DOT =====")
@@ -142,9 +140,9 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     liftedSyms.foreach {
       sym =>
         if (sym != null) {
-          sym.setOwner(stateMachineClass)
+          sym.owner = stateMachineClass
           if (sym.isModule)
-            sym.asModule.moduleClass.setOwner(stateMachineClass)
+            sym.asModule.moduleClass.owner = stateMachineClass
         }
     }
     // Replace the ValDefs in the splicee with Assigns to the corresponding lifted
@@ -162,7 +160,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
             val lhs = atPos(tree.pos) {
               gen.mkAttributedStableRef(thisType(fieldSym.owner.asClass), fieldSym)
             }
-            assignUnitType(treeCopy.Assign(tree, lhs, api.recur(rhs))).changeOwner(fieldSym, api.currentOwner)
+            assignUnitType(treeCopy.Assign(tree, lhs, api.recur(rhs))).changeOwner((fieldSym, api.currentOwner))
           }
         }
       case _: DefTree if liftedSyms(tree.symbol)           =>
@@ -181,7 +179,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       case x          => typingTransform(x, stateMachineClass)(useFields)
     }
 
-    tree.children.foreach(_.changeOwner(enclosingOwner, tree.symbol))
+    tree.children.foreach(_.changeOwner((enclosingOwner, tree.symbol)))
     val treeSubst = tree
 
     /* Fixes up DefDef: use lifted fields in `body` */
@@ -203,7 +201,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     val result = transformAt(result0) {
       case dd@DefDef(_, name.apply, _, List(List(_)), _, _) if dd.symbol.owner == stateMachineClass =>
         (api: TypingTransformApi) =>
-          val typedTree = fixup(dd, applyBody.changeOwner(enclosingOwner, dd.symbol), api)
+          val typedTree = fixup(dd, applyBody.changeOwner((enclosingOwner, dd.symbol)), api)
           typedTree
     }
     result

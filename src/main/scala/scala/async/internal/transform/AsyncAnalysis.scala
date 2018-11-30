@@ -7,8 +7,7 @@ package scala.async.internal.transform
 import scala.collection.mutable.ListBuffer
 
 trait AsyncAnalysis extends TransformUtils  {
-
-  import c.universe._
+  import u._
 
   /**
    * Analyze the contents of an `async` block in order to:
@@ -56,7 +55,7 @@ trait AsyncAnalysis extends TransformUtils  {
           reportUnsupportedAwait(tree, "try/catch")
           super.traverse(tree)
         case Return(_)                                        =>
-          c.abort(tree.pos, "return is illegal within a async block")
+          abort(tree.pos, "return is illegal within a async block")
         case DefDef(mods, _, _, _, _, _) if mods.hasFlag(Flag.LAZY) && containsAwait(tree) =>
           reportUnsupportedAwait(tree, "lazy val initializer")
         case ValDef(mods, _, _, _) if mods.hasFlag(Flag.LAZY) && containsAwait(tree) =>
@@ -95,7 +94,7 @@ trait AsyncAnalysis extends TransformUtils  {
 
     private def reportError(pos: Position, msg: String): Unit = {
       hasUnsupportedAwaits = true
-      c.abort(pos, msg)
+      abort(pos, msg)
     }
   }
 }

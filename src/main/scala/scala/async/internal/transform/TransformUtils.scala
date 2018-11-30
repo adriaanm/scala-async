@@ -3,38 +3,69 @@
  */
 package scala.async.internal.transform
 
-import scala.async.internal.AsyncContext
-import scala.collection.immutable.ListMap
+import scala.async.internal.{AsyncBase, AsyncNames}
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.reflect.macros.{Aliases, Internals}
+
+private[async] trait AsyncContext {
+  val u: scala.reflect.internal.SymbolTable
+  import u._
+
+  val body: Tree
+  val macroPos: Position
+  val asyncBase: AsyncBase
+  def asyncMacroSymbol: Symbol
+  def enclosingOwner: Symbol
+
+  def emitTryCatch: Boolean = asyncBase.futureSystem.emitTryCatch
+
+  // TODO does need to be a var??
+  var containsAwait: Tree => Boolean
+
+  //  def Expr[T: WeakTypeTag](tree: Tree): Expr[T]
+}
 
 /**
  * Utilities used in both `ExprBuilder` and `AnfTransform`.
  */
 private[async] trait TransformUtils extends AsyncContext {
+  import u._
 
-  def atMacroPos(t: c.Tree): c.Tree = c.universe.atPos(macroPos)(t)
+  def typecheck(tree: Tree): Tree
+  def abort(pos: Position, msg: String): Nothing
+  def error(pos: Position, msg: String): Unit
+  val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
 
-  import c.internal._
-  import c.universe._
-  import decorators._
+  import typingTransformers.{TypingTransformApi, typingTransform}
+
+  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
+  def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
+
+
+  def atMacroPos(t: Tree): Tree = atPos(macroPos)(t)
+
+  lazy val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
+    val names = new AsyncNames[u.type](u)
+    rootMirror.RootClass.attachments.update(names)
+    names
+  }
 
   object name extends asyncNames.AsyncName {
     def fresh(name: TermName): TermName = freshenIfNeeded(name)
-    def fresh(name: String): String = c.freshName(name)
+    def fresh(name: String): String = currentFreshNameCreator.newName(name) // TODO ok? was c.freshName
   }
 
-  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) = if (emitTryCatch) Try(block, catches, finalizer) else block
+  def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) =
+    if (emitTryCatch) Try(block, catches, finalizer) else block
 
-  def isAsync(fun: Tree) =
-    fun.symbol == defn.Async_async
+  lazy val IllegalStateExceptionClass = rootMirror.staticClass("java.lang.IllegalStateException")
 
-  def isAwait(fun: Tree) =
-    fun.symbol == defn.Async_await
+  private lazy val Async_async   = asyncBase.asyncMethod(u)(asyncMacroSymbol)
+  private lazy val Async_await   = asyncBase.awaitMethod(u)(asyncMacroSymbol)
 
-  def newBlock(stats: List[Tree], expr: Tree): Block = {
-    Block(stats, expr)
-  }
+  def isAsync(fun: Tree) = fun.symbol == Async_async
+  def isAwait(fun: Tree) = fun.symbol == Async_await
 
   def literalNull = Literal(Constant(null))
 
@@ -44,7 +75,7 @@ private[async] trait TransformUtils extends AsyncContext {
   def castToUnit(t: Tree) = gen.mkCast(t, definitions.UnitTpe)
 
   def assignUnitType(t: Tree): t.type = internal.setType(t, definitions.UnitTpe)
-  def setUnitMethodInfo(sym: Symbol): sym.type = internal.setInfo(sym, methodType(Nil, definitions.UnitTpe))
+  def setUnitMethodInfo(sym: Symbol): sym.type = internal.setInfo(sym, MethodType(Nil, definitions.UnitTpe))
 
   def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
 
@@ -73,7 +104,7 @@ private[async] trait TransformUtils extends AsyncContext {
 
 
   def mkAsInstanceOf(qual: Tree, tp: Type) =
-    TypeApply(Select(qual, newTermName("asInstanceOf")), List(TypeTree(tp)))
+    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(tp)))
 
   private def tpeOf(t: Tree): Type = t match {
     case _ if t.tpe != null                      => t.tpe
@@ -84,7 +115,7 @@ private[async] trait TransformUtils extends AsyncContext {
     case _                                       => NoType
   }
 
-  def adaptToUnit(rhs: List[Tree]): c.universe.Block =
+  def adaptToUnit(rhs: List[Tree]): Block =
     rhs match {
       case (rhs: Block) :: Nil if tpeOf(rhs) <:< definitions.UnitTpe  =>
         rhs
@@ -101,7 +132,7 @@ private[async] trait TransformUtils extends AsyncContext {
     }
 
   // TODO: why add the :Any type ascription to hide a tree of type Nothing? adaptToUnit doesn't seem to care
-  def adaptToUnitIgnoringNothing(stats: List[Tree]): c.universe.Block =
+  def adaptToUnitIgnoringNothing(stats: List[Tree]): Block =
     stats match {
       case init :+ last if tpeOf(last) =:= definitions.NothingTpe =>
         adaptToUnit(init :+ Typed(last, TypeTree(definitions.AnyTpe)))
@@ -109,14 +140,11 @@ private[async] trait TransformUtils extends AsyncContext {
         adaptToUnit(stats)
     }
 
-  def isPastTyper =
-    c.universe.asInstanceOf[scala.reflect.internal.SymbolTable].isPastTyper
-
   // Copy pasted from TreeInfo in the compiler.
   // Using a quasiquote pattern like `case q"$fun[..$targs](...$args)" => is not
   // sufficient since https://github.com/scala/scala/pull/3656 as it doesn't match
   // constructor invocations.
-  class Applied(val tree: Tree) {
+  private class Applied(val tree: Tree) {
     /** The tree stripped of the possibly nested applications.
      *  The original tree if it's not an application.
      */
@@ -158,9 +186,6 @@ private[async] trait TransformUtils extends AsyncContext {
     }
   }
 
-  /** Returns a wrapper that knows how to destructure and analyze applications.
-   */
-  def dissectApplied(tree: Tree) = new Applied(tree)
 
   /** Destructures applications into important subparts described in `Applied` class,
    *  namely into: core, targs and argss (in the specified order).
@@ -172,14 +197,13 @@ private[async] trait TransformUtils extends AsyncContext {
    *  For advanced use, call `dissectApplied` explicitly and use its methods instead of pattern matching.
    */
   object Applied {
-    def apply(tree: Tree): Applied = new Applied(tree)
-
-    def unapply(applied: Applied): Option[(Tree, List[Tree], List[List[Tree]])] =
+    def unapply(tree: Tree): Option[(Tree, List[Tree], List[List[Tree]])] = {
+      val applied = new Applied(tree)
       Some((applied.core, applied.targs, applied.argss))
-
-    def unapply(tree: Tree): Option[(Tree, List[Tree], List[List[Tree]])] =
-      unapply(dissectApplied(tree))
+    }
   }
+
+
   private lazy val Boolean_ShortCircuits: Set[Symbol] = {
     import definitions.BooleanClass
     def BooleanTermMember(name: String) = BooleanClass.typeSignature.member(newTermName(name).encodedName)
@@ -203,62 +227,13 @@ private[async] trait TransformUtils extends AsyncContext {
     (i, j) => util.Try(namess(i)(j)).getOrElse(TermName(s"arg_${i}_${j}"))
   }
 
-  object defn {
-    def mkList_apply[A](args: List[Expr[A]]): Expr[List[A]] = {
-      c.Expr(Apply(Ident(definitions.List_apply), args.map(_.tree)))
-    }
-
-    def mkList_contains[A](self: Expr[List[A]])(elem: Expr[Any]) = reify {
-      self.splice.contains(elem.splice)
-    }
-
-    def mkAny_==(self: Expr[Any])(other: Expr[Any]) = reify {
-      self.splice == other.splice
-    }
-
-    def mkTry_get[A](self: Expr[util.Try[A]]) = reify {
-      self.splice.get
-    }
-
-    val NonFatalClass = rootMirror.staticModule("scala.util.control.NonFatal")
-    val ThrowableClass = rootMirror.staticClass("java.lang.Throwable")
-    lazy val Async_async   = asyncBase.asyncMethod(c.universe)(c.macroApplication.symbol)
-    lazy val Async_await   = asyncBase.awaitMethod(c.universe)(c.macroApplication.symbol)
-    val IllegalStateExceptionClass = rootMirror.staticClass("java.lang.IllegalStateException")
-  }
-
-  // `while(await(x))` ... or `do { await(x); ... } while(...)` contain an `If` that loops;
-  // we must break that `If` into states so that it convert the label jump into a state machine
-  // transition
-  final def containsForeignLabelJump(t: Tree): Boolean = {
-    val labelDefs = t.collect {
-      case ld: LabelDef => ld.symbol
-    }.toSet
-    val result = t.exists {
-      case rt: RefTree => rt.symbol != null && isLabel(rt.symbol) && !(labelDefs contains rt.symbol)
-      case _ => false
-    }
-    result
-  }
-
   def isLabel(sym: Symbol): Boolean = {
     val LABEL = 1L << 17 // not in the public reflection API.
     (internal.flags(sym).asInstanceOf[Long] & LABEL) != 0L
   }
-  def isSynth(sym: Symbol): Boolean = {
-    val SYNTHETIC = 1 << 21 // not in the public reflection API.
-    (internal.flags(sym).asInstanceOf[Long] & SYNTHETIC) != 0L
-  }
-  def symId(sym: Symbol): Int = {
-    val symtab = this.c.universe.asInstanceOf[reflect.internal.SymbolTable]
-    sym.asInstanceOf[symtab.Symbol].id
-  }
-  def substituteTrees(t: Tree, from: List[Symbol], to: List[Tree]): Tree = {
-    val symtab = this.c.universe.asInstanceOf[reflect.internal.SymbolTable]
-    val subst = new symtab.TreeSubstituter(from.asInstanceOf[List[symtab.Symbol]], to.asInstanceOf[List[symtab.Tree]])
-    subst.transform(t.asInstanceOf[symtab.Tree]).asInstanceOf[Tree]
-  }
 
+  def substituteTrees(t: Tree, from: List[Symbol], to: List[Tree]): Tree =
+    (new TreeSubstituter(from, to)).transform(t)
 
   /** Map a list of arguments to:
     * - A list of argument Trees
@@ -318,17 +293,13 @@ private[async] trait TransformUtils extends AsyncContext {
   def listToBlock(trees: List[Tree]): Block = trees match {
     case trees @ (init :+ last) =>
       val pos = trees.map(_.pos).reduceLeft(_ union _)
-      newBlock(init, last).setType(last.tpe).setPos(pos)
+      Block(init, last).setType(last.tpe).setPos(pos)
   }
-
 
   def emptyConstructor: DefDef = {
     val emptySuperCall = Apply(Select(Super(This(tpnme.EMPTY), tpnme.EMPTY), nme.CONSTRUCTOR), Nil)
     DefDef(NoMods, nme.CONSTRUCTOR, List(), List(List()), TypeTree(), Block(List(emptySuperCall), Literal(Constant(()))))
   }
-
-  def applied(className: String, types: List[Type]): AppliedTypeTree =
-    AppliedTypeTree(Ident(rootMirror.staticClass(className)), types.map(TypeTree(_)))
 
   /** Descends into the regions of the tree that are subject to the
     * translation to a state machine by `async`. When a nested template,
@@ -397,31 +368,19 @@ private[async] trait TransformUtils extends AsyncContext {
   // Attributed version of `TreeGen#mkCastPreservingAnnotations`
   def mkAttributedCastPreservingAnnotations(tree: Tree, tp: Type): Tree = {
     atPos(tree.pos) {
-      val casted = c.typecheck(gen.mkCast(tree, uncheckedBounds(withoutAnnotations(tp)).dealias))
+      val casted = typecheck(gen.mkCast(tree, uncheckedBounds(tp.withoutAnnotations).dealias))
       Typed(casted, TypeTree(tp)).setType(tp)
     }
-  }
-
-  def deconst(tp: Type): Type = tp match {
-    case AnnotatedType(anns, underlying) => annotatedType(anns, deconst(underlying))
-    case ExistentialType(quants, underlying) => existentialType(quants, deconst(underlying))
-    case ConstantType(value) => deconst(value.tpe)
-    case _ => tp
   }
 
   def withAnnotation(tp: Type, ann: Annotation): Type = withAnnotations(tp, List(ann))
 
   def withAnnotations(tp: Type, anns: List[Annotation]): Type = tp match {
     case AnnotatedType(existingAnns, underlying) => annotatedType(anns ::: existingAnns, underlying)
-    case ExistentialType(quants, underlying) => existentialType(quants, withAnnotations(underlying, anns))
+    case ExistentialType(quants, underlying) => existentialAbstraction(quants, withAnnotations(underlying, anns))
     case _ => annotatedType(anns, tp)
   }
 
-  def withoutAnnotations(tp: Type): Type = tp match {
-    case AnnotatedType(anns, underlying) => withoutAnnotations(underlying)
-    case ExistentialType(quants, underlying) => existentialType(quants, withoutAnnotations(underlying))
-    case _ => tp
-  }
 
   def tpe(sym: Symbol): Type = {
     if (sym.isType) sym.asType.toType
@@ -448,26 +407,18 @@ private[async] trait TransformUtils extends AsyncContext {
       // Approximately:
       // q"new ${valueClass}[$..targs](argZero)"
       val target: Tree = gen.mkAttributedSelect(
-        c.typecheck(atMacroPos(
-        New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
+        typecheck(atMacroPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
 
       val zero = gen.mkMethodCall(target, argZero :: Nil)
       // restore the original type which we might otherwise have weakened with `baseType` above
-      c.typecheck(atMacroPos(gen.mkCast(zero, tp)))
+      typecheck(atMacroPos(gen.mkCast(zero, tp)))
     } else {
       gen.mkZero(tp)
     }
   }
 
-  // =====================================
-  // Copy/Pasted from Scala 2.10.3. See scala/bug#7694
-  private lazy val UncheckedBoundsClass =
-    c.mirror.staticClass("scala.reflect.internal.annotations.uncheckedBounds")
   // TODO: when we run after erasure the annotation is not needed
-  final def uncheckedBounds(tp: Type): Type =
-    if ((tp.typeArgs.isEmpty && (tp match { case _: TypeRef => true; case _ => false}))) tp
-    else withAnnotation(tp, Annotation(UncheckedBoundsClass.asType.toType, Nil, ListMap()))
-  // =====================================
+  final def uncheckedBounds(tp: Type): Type = u.uncheckedBounds(tp)
 
   /**
    * Efficiently decorate each subtree within `t` with the result of `t exists isAwait`,
@@ -478,22 +429,19 @@ private[async] trait TransformUtils extends AsyncContext {
    * in search of a sub tree that was decorated with the cached answer.
    */
   final def containsAwaitCached(t: Tree): Tree => Boolean = {
-    if (c.macroApplication.symbol == null) return (t => false)
+    if (asyncMacroSymbol == null) return (t => false)
 
     def treeCannotContainAwait(t: Tree) = t match {
       case _: Ident | _: TypeTree | _: Literal => true
       case _ => isAsync(t)
     }
     def shouldAttach(t: Tree) = !treeCannotContainAwait(t)
-    val symtab = c.universe.asInstanceOf[scala.reflect.internal.SymbolTable]
     def attachContainsAwait(t: Tree): Unit = if (shouldAttach(t)) {
-      val t1 = t.asInstanceOf[symtab.Tree]
-      t1.updateAttachment(ContainsAwait)
-      t1.removeAttachment[NoAwait.type]
+      t.updateAttachment(ContainsAwait)
+      t.removeAttachment[NoAwait.type]
     }
     def attachNoAwait(t: Tree): Unit = if (shouldAttach(t)) {
-      val t1 = t.asInstanceOf[symtab.Tree]
-      t1.updateAttachment(NoAwait)
+      t.updateAttachment(NoAwait)
     }
     object markContainsAwaitTraverser extends Traverser {
       var stack: List[Tree] = Nil
@@ -519,9 +467,8 @@ private[async] trait TransformUtils extends AsyncContext {
       object traverser extends Traverser {
         var containsAwait = false
         override def traverse(tree: Tree): Unit = {
-          def castTree = tree.asInstanceOf[symtab.Tree]
-          if (!castTree.hasAttachment[NoAwait.type]) {
-            if (castTree.hasAttachment[ContainsAwait.type])
+          if (!tree.hasAttachment[NoAwait.type]) {
+            if (tree.hasAttachment[ContainsAwait.type])
               containsAwait = true
             else if (!treeCannotContainAwait(t))
               super.traverse(tree)
@@ -534,10 +481,9 @@ private[async] trait TransformUtils extends AsyncContext {
   }
 
   final def cleanupContainsAwaitAttachments(t: Tree): t.type = {
-    val symtab = c.universe.asInstanceOf[scala.reflect.internal.SymbolTable]
     t.foreach {t =>
-      t.asInstanceOf[symtab.Tree].removeAttachment[ContainsAwait.type]
-      t.asInstanceOf[symtab.Tree].removeAttachment[NoAwait.type]
+      t.removeAttachment[ContainsAwait.type]
+      t.removeAttachment[NoAwait.type]
     }
     t
   }
@@ -548,6 +494,7 @@ private[async] trait TransformUtils extends AsyncContext {
   //    ``If` / `Block`) adjust types of enclosing
   final def adjustTypeOfTranslatedPatternMatches(t: Tree, owner: Symbol): Tree = {
     import definitions.UnitTpe
+
     typingTransform(t, owner) {
       (tree, api) =>
         tree match {
@@ -623,11 +570,10 @@ private[async] trait TransformUtils extends AsyncContext {
 
   final def mkMutableField(tpt: Type, name: TermName, init: Tree): List[Tree] = {
     if (isPastTyper) {
+      import scala.reflect.internal.Flags._
       // If we are running after the typer phase (ie being called from a compiler plugin)
       // we have to create the trio of members manually.
-      val ACCESSOR = (1L << 27).asInstanceOf[FlagSet]
-      val STABLE = (1L << 22).asInstanceOf[FlagSet]
-      val field = ValDef(Modifiers(Flag.MUTABLE | Flag.PRIVATE | Flag.LOCAL), name + " ", TypeTree(tpt), init)
+      val field = ValDef(Modifiers(MUTABLE | PRIVATE | LOCAL), name + " ", TypeTree(tpt), init)
       val getter = DefDef(Modifiers(ACCESSOR | STABLE), name, Nil, Nil, TypeTree(tpt), Select(This(tpnme.EMPTY), field.name))
       val setter = DefDef(Modifiers(ACCESSOR), name + "_=", Nil, List(List(ValDef(NoMods, TermName("x"), TypeTree(tpt), EmptyTree))), TypeTree(definitions.UnitTpe), Assign(Select(This(tpnme.EMPTY), field.name), Ident(TermName("x"))))
       field :: getter :: setter :: Nil

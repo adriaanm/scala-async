@@ -11,12 +11,10 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 trait ExprBuilder extends TransformUtils {
-
-  import c.internal._
-  import c.universe._
+  import u._
 
   val futureSystem: FutureSystem
-  val futureSystemOps: futureSystem.Ops { val c: ExprBuilder.this.c.type }
+  val futureSystemOps: futureSystem.Ops { val u: ExprBuilder.this.u.type }
 
   val stateAssigner  = new StateAssigner
   val labelDefStates = collection.mutable.Map[Symbol, Int]()
@@ -84,12 +82,12 @@ trait ExprBuilder extends TransformUtils {
 
     override def mkHandlerCaseForState[T: WeakTypeTag]: CaseDef = {
       val fun = This(tpnme.EMPTY)
-      val callOnComplete = futureSystemOps.onComplete[Any, Unit](c.Expr[futureSystem.Fut[Any]](awaitable.expr),
-        c.Expr[futureSystem.Tryy[Any] => Unit](fun), c.Expr[futureSystem.ExecContext](Ident(name.execContext))).tree
+      val callOnComplete = futureSystemOps.onComplete[Any, Unit](Expr[futureSystem.Fut[Any]](awaitable.expr),
+        Expr[futureSystem.Tryy[Any] => Unit](fun), Expr[futureSystem.ExecContext](Ident(name.execContext))).tree
       val tryGetOrCallOnComplete: List[Tree] =
         if (futureSystemOps.continueCompletedFutureOnSameThread) {
           val tempName = name.completed
-          val initTemp = ValDef(NoMods, tempName, TypeTree(futureSystemOps.tryType[Any]), futureSystemOps.getCompleted[Any](c.Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
+          val initTemp = ValDef(NoMods, tempName, TypeTree(futureSystemOps.tryType[Any]), futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
           val null_ne = Select(Literal(Constant(null)), TermName("ne"))
           val ifTree =
             If(Apply(null_ne, Ident(tempName) :: Nil),
@@ -103,7 +101,7 @@ trait ExprBuilder extends TransformUtils {
     }
 
     private def tryGetTree(tryReference: => Tree) = {
-      val tryyGet = futureSystemOps.tryyGet[Any](c.Expr[futureSystem.Tryy[Any]](tryReference)).tree
+      val tryyGet = futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree
       Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, awaitable.resultType))
     }
 
@@ -118,10 +116,10 @@ trait ExprBuilder extends TransformUtils {
     def ifIsFailureTree[T: WeakTypeTag](tryReference: => Tree) = {
       val getAndUpdateState = Block(List(tryGetTree(tryReference)), mkStateTree(nextState, symLookup))
       if (emitTryCatch) {
-        If(futureSystemOps.tryyIsFailure(c.Expr[futureSystem.Tryy[T]](tryReference)).tree,
+        If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(futureSystemOps.completeProm[T](
-            c.Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)),
-            c.Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, futureSystemOps.tryType[T]))).tree),
+            Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)),
+            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, futureSystemOps.tryType[T]))).tree),
             Return(literalUnit)),
           getAndUpdateState
         )
@@ -236,7 +234,7 @@ trait ExprBuilder extends TransformUtils {
     var currState    = startState
 
     def checkForUnsupportedAwait(tree: Tree) = if (containsAwait(tree))
-      c.abort(tree.pos, "await must not be used in this position")
+      abort(tree.pos, "await must not be used in this position")
 
     def nestedBlockBuilder(nestedTree: Tree, startState: Int, endState: Int) = {
       val (nestedStats, nestedExpr) = statsAndExpr(nestedTree)
@@ -255,6 +253,17 @@ trait ExprBuilder extends TransformUtils {
           before.reverse.takeWhile(isPatternCaseLabelDef) ::: after.takeWhile(isPatternCaseLabelDef)
         case _ =>
           stats :+ expr
+      }
+    }
+
+    // `while(await(x))` ... or `do { await(x); ... } while(...)` contain an `If` that loops;
+    // we must break that `If` into states so that it convert the label jump into a state machine
+    // transition
+    private def containsForeignLabelJump(t: Tree): Boolean = {
+      val labelDefs = t.collect { case ld: LabelDef => ld.symbol }.toSet
+      t.exists {
+        case rt: RefTree => rt.symbol != null && isLabel(rt.symbol) && !(labelDefs contains rt.symbol)
+        case _ => false
       }
     }
 
@@ -347,6 +356,9 @@ trait ExprBuilder extends TransformUtils {
     def memberRef(name: TermName): Tree =
       gen.mkAttributedRef(stateMachineMember(name))
   }
+
+  private lazy val NonFatalClass = rootMirror.staticModule("scala.util.control.NonFatal")
+  private lazy val ThrowableClass = rootMirror.staticClass("java.lang.Throwable")
 
   /**
    * Uses `AsyncBlockBuilder` to create an instance of `AsyncBlock`.
@@ -467,9 +479,9 @@ trait ExprBuilder extends TransformUtils {
       def mkCombinedHandlerCases[T: WeakTypeTag]: List[CaseDef] = {
         val caseForLastState: CaseDef = {
           val lastState = asyncStates.last
-          val lastStateBody = c.Expr[T](lastState.body)
+          val lastStateBody = Expr[T](lastState.body)
           val rhs = futureSystemOps.completeWithSuccess(
-            c.Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), lastStateBody)
+            Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), lastStateBody)
           mkHandlerCase(lastState.state, Block(rhs.tree, Return(literalUnit)))
         }
         asyncStates match {
@@ -509,7 +521,7 @@ trait ExprBuilder extends TransformUtils {
           Match(stateMemberRef,
                  mkCombinedHandlerCases[T] ++
                  initStates.flatMap(_.mkOnCompleteHandler[T]) ++
-                 List(CaseDef(Ident(nme.WILDCARD), EmptyTree, Throw(Apply(Select(New(Ident(defn.IllegalStateExceptionClass)), termNames.CONSTRUCTOR), List())))))
+                 List(CaseDef(Ident(nme.WILDCARD), EmptyTree, Throw(Apply(Select(New(Ident(IllegalStateExceptionClass)), termNames.CONSTRUCTOR), List())))))
 
         val body1 = compactStates(body)
 
@@ -517,15 +529,15 @@ trait ExprBuilder extends TransformUtils {
           body1,
           List(
             CaseDef(
-            Bind(name.t, Typed(Ident(nme.WILDCARD), Ident(defn.ThrowableClass))),
+            Bind(name.t, Typed(Ident(nme.WILDCARD), Ident(ThrowableClass))),
             EmptyTree, {
               val then = {
-                val t = c.Expr[Throwable](Ident(name.t))
+                val t = Expr[Throwable](Ident(name.t))
                 val complete = futureSystemOps.completeProm[T](
-                    c.Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), futureSystemOps.tryyFailure[T](t)).tree
+                    Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), futureSystemOps.tryyFailure[T](t)).tree
                 Block(toList(complete), Return(literalUnit))
               }
-              If(Apply(Ident(defn.NonFatalClass), List(Ident(name.t))), then, Throw(Ident(name.t)))
+              If(Apply(Ident(NonFatalClass), List(Ident(name.t))), then, Throw(Ident(name.t)))
               then
             })), EmptyTree)
       }
@@ -580,7 +592,7 @@ trait ExprBuilder extends TransformUtils {
   }
 
   private def isSyntheticBindVal(tree: Tree) = tree match {
-    case vd@ValDef(_, lname, _, Ident(rname)) => attachments(vd.symbol).contains[SyntheticBindVal.type]
+    case vd@ValDef(_, lname, _, Ident(rname)) => vd.symbol.attachments.contains[SyntheticBindVal.type]
     case _                                    => false
   }
 
@@ -598,7 +610,7 @@ trait ExprBuilder extends TransformUtils {
   // ID, even though the state machine transform hasn't yet processed the target label
   // def. Negative numbers are used so as as not to clash with regular state IDs, which
   // are allocated in ascending order from 0.
-  private def stateIdForLabel(sym: Symbol): Int = -symId(sym)
+  private def stateIdForLabel(sym: Symbol): Int = -sym.id
 
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
