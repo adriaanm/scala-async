@@ -4,13 +4,11 @@
 
 package scala.async.internal.transform
 
-import scala.async.internal.AsyncBase
+import scala.reflect.internal.Flags
 
 trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
-
-  val asyncBase: AsyncBase
 
   def asyncTransform[T](execContext: Tree)
                        (resultType: WeakTypeTag[T]): Tree = {
@@ -35,9 +33,11 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(futureSystemOps.tryType[Any])
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
+    // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
+    // instead of splicing stuff in (spliceMethodBodies)?
     val stateMachine: ClassDef = {
       val body: List[Tree] = {
-        val stateVar = ValDef(Modifiers(Flag.MUTABLE | Flag.PRIVATE | Flag.LOCAL), name.state, TypeTree(definitions.IntTpe), Literal(Constant(StateAssigner.Initial)))
+        val stateVar = ValDef(Modifiers(Flags.MUTABLE | Flags.PRIVATE | Flags.LOCAL), name.state, TypeTree(definitions.IntTpe), Literal(Constant(StateAssigner.Initial)))
         val resultAndAccessors = mkMutableField(futureSystemOps.promType[T](uncheckedBoundsResultTag), name.result, futureSystemOps.createProm[T](uncheckedBoundsResultTag).tree)
         val execContextValDef = ValDef(NoMods, name.execContext, TypeTree(), execContext)
 
@@ -53,12 +53,20 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       // See SI-1247 for the the optimization that avoids creation.
       val funParents = List(function1ToUnit(futureSystemOps.tryType[Any], useClass), function0ToUnit)
 
-      typecheckClassDef(ClassDef(NoMods, name.stateMachineT, Nil, Template((customParents ::: funParents).map(TypeTree(_)), emptyValDef, body)))
+      val templ = Template((customParents ::: funParents).map(TypeTree(_)), noSelfType, body)
+
+      // TODO: add a dependency on scala-compiler and get rid of this roundabout type checking hack?
+      // or can we skip the type checking entirely and just create a symbol?
+      {
+        val Block(cd1 :: Nil, _) =
+          typingTransform(atMacroPos(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
+
+        cd1.asInstanceOf[ClassDef]
+      }
     }
 
-    val stateMachineClass = stateMachine.symbol
     val asyncBlock: AsyncBlock = {
-      val symLookup = SymLookup(stateMachineClass, applyDefDefDummyBody.vparamss.head.head.symbol)
+      val symLookup = SymLookup(stateMachine.symbol, applyDefDefDummyBody.vparamss.head.head.symbol)
       buildAsyncBlock(anfTree, symLookup)
     }
 
@@ -72,7 +80,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
       val assigns = flds.map { fld =>
         val fieldSym = fld.symbol
         val assign = Assign(gen.mkAttributedStableRef(thisType(fieldSym.owner), fieldSym), mkZero(fieldSym.info))
-        val nulled = asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
+        val nulled = nullOut(fieldSym)
         if (isLiteralUnit(nulled)) assign
         else Block(nulled :: Nil, assign)
       }
@@ -81,27 +89,23 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     }
 
     def startStateMachine: Tree = {
-      val stateMachineSpliced: Tree = spliceMethodBodies(
-        liftedFields,
-        stateMachine,
-        atMacroPos(asyncBlock.onCompleteHandler[T])
-      )
+      val stateMachineSpliced: Tree =
+        spliceMethodBodies(liftedFields, stateMachine, atMacroPos(asyncBlock.onCompleteHandler[T]))
 
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
 
       Block(List[Tree](
         stateMachineSpliced,
         ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil)),
-        futureSystemOps.spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))
-      ),
-      futureSystemOps.promiseToFuture(Expr[futureSystem.Prom[T]](selectStateMachine(name.result))).tree)
+        spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
+        promiseToFuture[T](selectStateMachine(name.result))
+      )
     }
 
     val isSimple = asyncBlock.asyncStates.size == 1
-    val result = if (isSimple)
-      futureSystemOps.spawn(body, execContext) // generate lean code for the simple case of `async { 1 + 1 }`
-    else
-      startStateMachine
+    val result =
+      if (isSimple) spawn(body, execContext) // generate lean code for the simple case of `async { 1 + 1 }`
+      else startStateMachine
 
     if(AsyncUtils.verbose) {
       logDiagnostics(anfTree, asyncBlock, asyncBlock.asyncStates.map(_.toString))
@@ -207,11 +211,4 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     result
   }
 
-  def typecheckClassDef(cd: ClassDef): ClassDef = {
-    val Block(cd1 :: Nil, _) = typingTransform(atMacroPos(Block(cd :: Nil, literalUnit)))(
-      (tree, api) =>
-        api.typecheck(tree)
-    )
-    cd1.asInstanceOf[ClassDef]
-  }
 }

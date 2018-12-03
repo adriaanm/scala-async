@@ -9,9 +9,10 @@ import java.util.function.IntConsumer
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
+import scala.reflect.internal.Flags._
+
 trait LiveVariables extends ExprBuilder {
   import u._
-  import Flag._
 
   /**
    *  Returns for a given state a list of fields (as trees) that should be nulled out

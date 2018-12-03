@@ -5,6 +5,7 @@
 package scala.async.internal.transform
 
 import scala.collection.mutable.ListBuffer
+import scala.reflect.internal.Flags
 
 trait AsyncAnalysis extends TransformUtils  {
   import u._
@@ -56,9 +57,9 @@ trait AsyncAnalysis extends TransformUtils  {
           super.traverse(tree)
         case Return(_)                                        =>
           abort(tree.pos, "return is illegal within a async block")
-        case DefDef(mods, _, _, _, _, _) if mods.hasFlag(Flag.LAZY) && containsAwait(tree) =>
+        case DefDef(mods, _, _, _, _, _) if mods.hasFlag(Flags.LAZY) && containsAwait(tree) =>
           reportUnsupportedAwait(tree, "lazy val initializer")
-        case ValDef(mods, _, _, _) if mods.hasFlag(Flag.LAZY) && containsAwait(tree) =>
+        case ValDef(mods, _, _, _) if mods.hasFlag(Flags.LAZY) && containsAwait(tree) =>
           reportUnsupportedAwait(tree, "lazy val initializer")
         case CaseDef(_, guard, _) if guard exists isAwait     =>
           // TODO lift this restriction

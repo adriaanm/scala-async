@@ -4,10 +4,11 @@
 
 package scala.async.internal.transform
 
+import scala.reflect.internal.Flags
+
 private[async] trait AnfTransform extends TransformUtils {
   import u._
-  import Flag._
-  import typingTransformers.{TypingTransformApi, typingTransform}
+  import typingTransformers.typingTransform
 
   def anfTransform(tree: Tree, owner: Symbol): Block = {
     // Must prepend the () for issue #31.
@@ -148,13 +149,13 @@ private[async] trait AnfTransform extends TransformUtils {
         }
 
         def defineVar(name: TermName, tp: Type, pos: Position): ValDef = {
-          val sym = currentOwner.newTermSymbol(name, pos, MUTABLE | SYNTHETIC).setInfo(uncheckedBounds(tp))
+          val sym = currentOwner.newTermSymbol(name, pos, Flags.MUTABLE | Flags.SYNTHETIC).setInfo(uncheckedBounds(tp))
           ValDef(sym, mkZero(uncheckedBounds(tp))).setType(NoType).setPos(pos)
         }
       }
 
       def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
-        val sym = currentOwner.newTermSymbol(name, pos, SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
+        val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
         ValDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
       }
 

@@ -62,9 +62,6 @@ trait FutureSystem {
     def completeProm[A](prom: Expr[Prom[A]], value: Expr[Tryy[A]]): Expr[Unit]
     def completeWithSuccess[A: WeakTypeTag](prom: Expr[Prom[A]], value: Expr[A]): Expr[Unit] = completeProm(prom, tryySuccess(value))
 
-    def spawn(tree: Tree, execContext: Tree): Tree =
-      future(c.Expr[Unit](tree))(c.Expr[ExecContext](execContext)).tree
-
     def tryyIsFailure[A](tryy: Expr[Tryy[A]]): Expr[Boolean]
 
     def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A]

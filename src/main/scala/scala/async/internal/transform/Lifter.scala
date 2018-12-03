@@ -5,10 +5,10 @@
 package scala.async.internal.transform
 
 import scala.collection.mutable
+import scala.reflect.internal.Flags._
 
 trait Lifter extends ExprBuilder {
   import u._
-  import Flag._
 
   /**
    * Identify which DefTrees are used (including transitively) which are declared

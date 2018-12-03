@@ -30,9 +30,6 @@ private[async] trait AsyncContext {
   def typecheck(tree: Tree): Tree
   val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
 
-  def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
-  def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
-
   lazy val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
     val names = new AsyncNames[u.type](u)
     rootMirror.RootClass.attachments.update(names)
@@ -84,7 +81,7 @@ trait PhasedTransform extends AsyncContext {
     appliedType(fun, argTp, typeOf[Unit])
   }
   def apply1ToUnitDefDef(argTp: Type): DefDef = {
-    val applyVParamss = List(List(ValDef(Modifiers(Flag.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
+    val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
 
@@ -220,10 +217,7 @@ private[async] trait TransformUtils extends AsyncContext with PhasedTransform {
     (i, j) => util.Try(namess(i)(j)).getOrElse(TermName(s"arg_${i}_${j}"))
   }
 
-  def isLabel(sym: Symbol): Boolean = {
-    val LABEL = 1L << 17 // not in the public reflection API.
-    (internal.flags(sym).asInstanceOf[Long] & LABEL) != 0L
-  }
+  def isLabel(sym: Symbol): Boolean = sym.isLabel
 
   def substituteTrees(t: Tree, from: List[Symbol], to: List[Tree]): Tree =
     (new TreeSubstituter(from, to)).transform(t)
