@@ -4,6 +4,7 @@
 package scala.async.internal
 
 import scala.language.higherKinds
+import scala.reflect.api.Universe
 import scala.reflect.internal.SymbolTable
 import scala.reflect.macros.Context
 
@@ -28,9 +29,13 @@ trait FutureSystem {
   type Tryy[T]
 
   trait Ops {
-    protected val c: Context { val universe: u.type}
     val u: SymbolTable
     import u._
+
+    def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
+    def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
+
+    def literalUnitExpr = Expr[Unit](Literal(Constant(())))
 
     def promType[A: WeakTypeTag]: Type
     def tryType[A: WeakTypeTag]: Type
@@ -75,7 +80,7 @@ trait FutureSystem {
     def dot(enclosingOwner: Symbol, macroApplication: Tree): Option[(String => Unit)] = None
   }
 
-  def mkOps(c0: Context): Ops { val c: c0.type }
+  def mkOps(u0: Universe): Ops { val u: u0.type }
 
   @deprecated("No longer honoured by the macro, all generated names now contain $async to avoid accidental clashes with lambda lifted names", "0.9.7")
   def freshenAllNames: Boolean = false
@@ -85,7 +90,6 @@ trait FutureSystem {
 }
 
 object ScalaConcurrentFutureSystem extends FutureSystem {
-
   import scala.concurrent._
 
   type Prom[A] = Promise[A]
@@ -93,9 +97,8 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   type ExecContext = ExecutionContext
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(c0: Context): Ops { val c: c0.type } = new Ops {
-    val c: c0.type { val universe: u.type} = c0.asInstanceOf[c0.type { val universe: u.type}]
-    val u = c0.universe.asInstanceOf[SymbolTable]
+  def mkOps(u0: Universe): Ops { val u: u0.type } = new Ops {
+    val u: u0.type with SymbolTable = u0.asInstanceOf[u0.type with SymbolTable]
     import u._
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
@@ -127,7 +130,7 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
 
     def completeProm[A](prom: Expr[Prom[A]], value: Expr[scala.util.Try[A]]): Expr[Unit] = reify {
       prom.splice.complete(value.splice)
-      c.Expr[Unit](Literal(Constant(()))).splice
+      literalUnitExpr.splice
     }
 
     def tryyIsFailure[A](tryy: Expr[scala.util.Try[A]]): Expr[Boolean] = reify {

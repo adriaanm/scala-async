@@ -52,12 +52,11 @@ object IdentityFutureSystem extends FutureSystem {
   type ExecContext = Unit
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(c0: Context): Ops { val c: c0.type } = new Ops {
-    val c: c0.type { val universe: u.type} = c0.asInstanceOf[c0.type { val universe: u.type}]
-    val u = c0.universe.asInstanceOf[SymbolTable]
+  def mkOps(u0: Universe): Ops { val u: u0.type } = new Ops {
+    val u: u0.type with SymbolTable = u0.asInstanceOf[u0.type with SymbolTable]
     import u._
 
-    def execContext: Expr[ExecContext] = c.Expr[Unit](Literal(Constant(())))
+    def execContext: u.Expr[Unit] = literalUnitExpr
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Box[A]]
     def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
@@ -76,12 +75,12 @@ object IdentityFutureSystem extends FutureSystem {
     def onComplete[A, U](future: Expr[Fut[A]], fun: Expr[Tryy[A] => U],
                          execContext: Expr[ExecContext]): Expr[Unit] = reify {
       fun.splice.apply(util.Success(future.splice))
-      c.Expr[Unit](Literal(Constant(()))).splice
+      literalUnitExpr.splice
     }
 
     def completeProm[A](prom: Expr[Prom[A]], value: Expr[Tryy[A]]): Expr[Unit] = reify {
       prom.splice.a = value.splice.get
-      c.Expr[Unit](Literal(Constant(()))).splice
+      literalUnitExpr.splice
     }
 
     def tryyIsFailure[A](tryy: Expr[Tryy[A]]): Expr[Boolean] = reify {

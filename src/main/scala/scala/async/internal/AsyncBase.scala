@@ -65,7 +65,7 @@ abstract class AsyncBase {
 
         // These members are required by `ExprBuilder`:
         val futureSystem: FutureSystem                             = AsyncBase.this.futureSystem
-        val futureSystemOps: futureSystem.Ops { val u: self.u.type } = futureSystem.mkOps(c).asInstanceOf[futureSystem.Ops { val u: self.u.type }]
+        val futureSystemOps: futureSystem.Ops { val u: self.u.type } = futureSystem.mkOps(u)
         var containsAwait: Tree => Boolean = containsAwaitCached(body)
         lazy val macroPos: Position = asyncMacroSymbol.pos.makeTransparent
 
