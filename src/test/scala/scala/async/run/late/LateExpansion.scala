@@ -480,7 +480,8 @@ abstract class LatePlugin extends Plugin {
       }
     }
 
-    override val runsAfter: List[String] = "patmat" :: Nil
+    override val runsAfter: List[String] = "uncurry" :: Nil
+    override val runsRightAfter: Option[String] = Some("uncurry")
     override val phaseName: String = "postpatmat"
 
   })
