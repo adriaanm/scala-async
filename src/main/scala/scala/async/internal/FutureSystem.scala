@@ -4,9 +4,7 @@
 package scala.async.internal
 
 import scala.language.higherKinds
-import scala.reflect.api.Universe
 import scala.reflect.internal.SymbolTable
-import scala.reflect.macros.Context
 
 /**
  * An abstraction over a future system.
@@ -28,8 +26,9 @@ trait FutureSystem {
   /** Any data type isomorphic to scala.util.Try. */
   type Tryy[T]
 
-  trait Ops {
-    val u: SymbolTable
+  // We could do with just U <: reflect.api.Universe if it wasn't Expr and WeakTypeTag
+  // (the api effectively doesn't let you call these factories since there's no way to get at the Tree- and TypeCreators)
+  abstract class Ops[U <: SymbolTable](val u: U) {
     import u._
 
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
@@ -80,7 +79,7 @@ trait FutureSystem {
     def dot(enclosingOwner: Symbol, macroApplication: Tree): Option[(String => Unit)] = None
   }
 
-  def mkOps(u0: Universe): Ops { val u: u0.type }
+  def mkOps(u: SymbolTable): Ops[u.type]
 
   @deprecated("No longer honoured by the macro, all generated names now contain $async to avoid accidental clashes with lambda lifted names", "0.9.7")
   def freshenAllNames: Boolean = false
@@ -97,8 +96,8 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   type ExecContext = ExecutionContext
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(u0: Universe): Ops { val u: u0.type } = new Ops {
-    val u: u0.type with SymbolTable = u0.asInstanceOf[u0.type with SymbolTable]
+  def mkOps(u: SymbolTable): Ops[u.type] = new ScalaConcurrentOps[u.type](u)
+  class ScalaConcurrentOps[U <: SymbolTable](u0: U) extends Ops[U](u0) {
     import u._
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]

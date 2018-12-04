@@ -7,8 +7,8 @@ package scala.async.internal.transform
 import scala.reflect.internal.Flags
 
 trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
-  import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
+  import u._
 
   def asyncTransform[T](execContext: Tree)
                        (resultType: WeakTypeTag[T]): Tree = {

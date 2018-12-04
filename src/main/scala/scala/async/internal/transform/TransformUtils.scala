@@ -178,8 +178,8 @@ trait PhasedTransform extends AsyncContext {
  * Utilities used in both `ExprBuilder` and `AnfTransform`.
  */
 private[async] trait TransformUtils extends AsyncContext with PhasedTransform {
-  import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
+  import u._
 
 
   def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) =

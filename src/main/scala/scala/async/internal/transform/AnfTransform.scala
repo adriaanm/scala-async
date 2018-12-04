@@ -7,8 +7,8 @@ package scala.async.internal.transform
 import scala.reflect.internal.Flags
 
 private[async] trait AnfTransform extends TransformUtils {
-  import u._
   import typingTransformers.typingTransform
+  import u._
 
   def anfTransform(tree: Tree, owner: Symbol): Block = {
     // Must prepend the () for issue #31.

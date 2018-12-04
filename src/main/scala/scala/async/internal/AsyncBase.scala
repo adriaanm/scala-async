@@ -5,9 +5,9 @@
 package scala.async.internal
 
 import scala.async.internal.transform.{AsyncTransform, AsyncUtils}
+import scala.reflect.api.Universe
 import scala.reflect.internal.annotations.compileTimeOnly
 import scala.reflect.macros.{Aliases, Context, Internals}
-import scala.reflect.api.Universe
 
 /**
  * A base class for the `async` macro. Subclasses must provide:
@@ -64,8 +64,8 @@ abstract class AsyncBase {
         def enclosingOwner: Symbol = ctx.internal.enclosingOwner
 
         // These members are required by `ExprBuilder`:
-        val futureSystem: FutureSystem                             = AsyncBase.this.futureSystem
-        val futureSystemOps: futureSystem.Ops { val u: self.u.type } = futureSystem.mkOps(u)
+        val futureSystem: FutureSystem = AsyncBase.this.futureSystem
+        val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
         var containsAwait: Tree => Boolean = containsAwaitCached(body)
         lazy val macroPos: Position = asyncMacroSymbol.pos.makeTransparent
 

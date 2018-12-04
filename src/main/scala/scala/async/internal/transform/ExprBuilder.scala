@@ -14,7 +14,7 @@ trait ExprBuilder extends TransformUtils {
   import u._
 
   val futureSystem: FutureSystem
-  val futureSystemOps: futureSystem.Ops { val u: ExprBuilder.this.u.type }
+  val futureSystemOps: futureSystem.Ops[u.type]
 
   def nullOut(fieldSym: Symbol): Tree =
     asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
