@@ -54,6 +54,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       // See SI-1247 for the the optimization that avoids creation.
       val funParents = List(function1ToUnit(futureSystemOps.tryType[Any], useClass), function0ToUnit)
 
+      // TODO: after erasure we have to change the order of these parents etc
       val templ = Template((customParents ::: funParents).map(TypeTree(_)), noSelfType, body)
 
       // TODO: add a dependency on scala-compiler and get rid of this roundabout type checking hack?

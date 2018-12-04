@@ -56,8 +56,6 @@ object IdentityFutureSystem extends FutureSystem {
   class IdentityOps[U <: SymbolTable](u0: U) extends Ops[U](u0) {
     import u._
 
-    def execContext: u.Expr[Unit] = literalUnitExpr
-
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Box[A]]
     def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
     def execContextType: Type = weakTypeOf[Unit]
