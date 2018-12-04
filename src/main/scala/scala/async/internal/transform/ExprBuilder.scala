@@ -13,8 +13,8 @@ import scala.collection.mutable.ListBuffer
 trait ExprBuilder extends TransformUtils {
   import u._
 
-  val futureSystem: FutureSystem
-  val futureSystemOps: futureSystem.Ops[u.type]
+  val futureSystem: FutureSystem = asyncBase.futureSystem
+  val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
 
   def nullOut(fieldSym: Symbol): Tree =
     asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
@@ -29,8 +29,8 @@ trait ExprBuilder extends TransformUtils {
   def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
 
 
-  val stateAssigner  = new StateAssigner
-  val labelDefStates = collection.mutable.Map[Symbol, Int]()
+  private val stateAssigner  = new StateAssigner
+  private val labelDefStates = collection.mutable.Map[Symbol, Int]()
 
   trait AsyncState {
     def state: Int

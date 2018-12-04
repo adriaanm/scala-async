@@ -3,26 +3,21 @@
  */
 package scala.async.internal.transform
 
-import scala.async.internal.{AsyncBase, AsyncNames}
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.reflect.internal.Flags
+import scala.reflect.internal.{SymbolTable, Flags}
 import scala.reflect.macros.{Aliases, Internals}
 
+import scala.async.internal.{AsyncBase, AsyncNames}
+
 private[async] trait AsyncContext {
-  val u: scala.reflect.internal.SymbolTable
+  val asyncBase: AsyncBase
+
+  val u: SymbolTable
   import u._
 
-  val body: Tree
-  val macroPos: Position
-  val asyncBase: AsyncBase
   def asyncMacroSymbol: Symbol
   def enclosingOwner: Symbol
-
-  def emitTryCatch: Boolean = asyncBase.futureSystem.emitTryCatch
-
-  // TODO does need to be a var??
-  var containsAwait: Tree => Boolean
 
   // macro context interface -- the rest is meant to be independent of our being a macro (planning to move async into the compiler)
   def abort(pos: Position, msg: String): Nothing
@@ -30,6 +25,7 @@ private[async] trait AsyncContext {
   def typecheck(tree: Tree): Tree
   val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
 
+  // TODO: rework
   lazy val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
     val names = new AsyncNames[u.type](u)
     rootMirror.RootClass.attachments.update(names)
@@ -47,6 +43,7 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
+  lazy val macroPos: Position = asyncMacroSymbol.pos.makeTransparent
   def atMacroPos(t: Tree): Tree = atPos(macroPos)(t)
 
   def literalNull = Literal(Constant(null))
@@ -177,10 +174,11 @@ trait PhasedTransform extends AsyncContext {
 /**
  * Utilities used in both `ExprBuilder` and `AnfTransform`.
  */
-private[async] trait TransformUtils extends AsyncContext with PhasedTransform {
+private[async] trait TransformUtils extends PhasedTransform {
   import typingTransformers.{TypingTransformApi, typingTransform}
   import u._
 
+  def emitTryCatch: Boolean = asyncBase.futureSystem.emitTryCatch
 
   def maybeTry(block: Tree, catches: List[CaseDef], finalizer: Tree) =
     if (emitTryCatch) Try(block, catches, finalizer) else block
@@ -374,64 +372,61 @@ private[async] trait TransformUtils extends AsyncContext with PhasedTransform {
     else NoPrefix
   }
 
-
   /**
-   * Efficiently decorate each subtree within `t` with the result of `t exists isAwait`,
-   * and return a function that can be used on derived trees to efficiently test the
-   * same condition.
-   *
-   * If the derived tree contains synthetic wrapper trees, these will be recursed into
-   * in search of a sub tree that was decorated with the cached answer.
-   */
-  final def containsAwaitCached(t: Tree): Tree => Boolean = {
-    if (asyncMacroSymbol == null) return (t => false)
-
-    def treeCannotContainAwait(t: Tree) = t match {
-      case _: Ident | _: TypeTree | _: Literal => true
-      case _ => isAsync(t)
-    }
-    def shouldAttach(t: Tree) = !treeCannotContainAwait(t)
-    def attachContainsAwait(t: Tree): Unit = if (shouldAttach(t)) {
-      t.updateAttachment(ContainsAwait)
-      t.removeAttachment[NoAwait.type]
-    }
-    def attachNoAwait(t: Tree): Unit = if (shouldAttach(t)) {
-      t.updateAttachment(NoAwait)
-    }
-    object markContainsAwaitTraverser extends Traverser {
-      var stack: List[Tree] = Nil
-
-      override def traverse(tree: Tree): Unit = {
-        stack ::= tree
-        try {
-          if (isAsync(tree)) {
-            ;
-          } else {
-            if (isAwait(tree))
-              stack.foreach(attachContainsAwait)
-            else
-              attachNoAwait(tree)
-            super.traverse(tree)
-          }
-        } finally stack = stack.tail
-      }
-    }
-    markContainsAwaitTraverser.traverse(t)
-
-    (t: Tree) => {
+    * Efficiently decorate each subtree within `t` with the result of `t exists isAwait`,
+    * and return a function that can be used on derived trees to efficiently test the
+    * same condition.
+    *
+    * If the derived tree contains synthetic wrapper trees, these will be recursed into
+    * in search of a sub tree that was decorated with the cached answer.
+    *
+    * Requires markContainsAwaitTraverser has previously traversed `t``
+    **/
+  final def containsAwait(t: Tree): Boolean =
+    if (asyncMacroSymbol == null) false
+    else {
       object traverser extends Traverser {
         var containsAwait = false
-        override def traverse(tree: Tree): Unit = {
-          if (!tree.hasAttachment[NoAwait.type]) {
-            if (tree.hasAttachment[ContainsAwait.type])
-              containsAwait = true
-            else if (!treeCannotContainAwait(t))
-              super.traverse(tree)
-          }
-        }
+        override def traverse(tree: Tree): Unit =
+          if (tree.hasAttachment[NoAwait.type]) {} // safe to skip
+          else if (tree.hasAttachment[ContainsAwait.type]) containsAwait = true
+          else if (markContainsAwaitTraverser.shouldAttach(t)) super.traverse(tree)
       }
       traverser.traverse(t)
       traverser.containsAwait
+    }
+
+  def markContains(t: Tree) = markContainsAwaitTraverser.traverse(t)
+
+  private object markContainsAwaitTraverser extends Traverser {
+    def shouldAttach(t: Tree) = !treeCannotContainAwait(t)
+    private def treeCannotContainAwait(t: Tree) = t match {
+      case _: Ident | _: TypeTree | _: Literal => true
+      case _ => isAsync(t)
+    }
+    private def attachContainsAwait(t: Tree): Unit = if (shouldAttach(t)) {
+      t.updateAttachment(ContainsAwait)
+      t.removeAttachment[NoAwait.type]
+    }
+    private def attachNoAwait(t: Tree): Unit = if (shouldAttach(t)) {
+      t.updateAttachment(NoAwait)
+    }
+
+    var stack: List[Tree] = Nil
+
+    override def traverse(tree: Tree): Unit = {
+      stack ::= tree
+      try {
+        if (isAsync(tree)) {
+          ;
+        } else {
+          if (isAwait(tree))
+            stack.foreach(attachContainsAwait)
+          else
+            attachNoAwait(tree)
+          super.traverse(tree)
+        }
+      } finally stack = stack.tail
     }
   }
 

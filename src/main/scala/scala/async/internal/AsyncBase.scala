@@ -21,7 +21,6 @@ import scala.reflect.macros.{Aliases, Context, Internals}
  * The default implementation, [[scala.async.Async]], binds the macro to `scala.concurrent._`.
  */
 abstract class AsyncBase {
-
   type FS <: FutureSystem
   val futureSystem: FS
 
@@ -43,44 +42,28 @@ abstract class AsyncBase {
                                  (body: c.Expr[T])
                                  (execContext: c.Expr[futureSystem.ExecContext]): c.Expr[futureSystem.Fut[T]] = {
 
-    def AsyncMacro(body0: c.Tree) =
-      new AsyncTransform { self =>
-        // The actual transformation happens in terms of the internal compiler data structures.
-        // We hide the macro context from the classes in the transform package,
-        // because they're basically a compiler plugin packaged as a macro.
-        val u = c.universe.asInstanceOf[scala.reflect.internal.SymbolTable]
+    object asyncMacro extends AsyncTransform(AsyncBase.this, c.universe.asInstanceOf[scala.reflect.internal.SymbolTable]) {
+      // The actual transformation happens in terms of the internal compiler data structures.
+      // We hide the macro context from the classes in the transform package,
+      // because they're basically a compiler plugin packaged as a macro.
+      import u._
 
-        import u._
+      // I think there's a bug in subtyping -- shouldn't be necessary to specify the Aliases parent explicitly
+      // (but somehow we don't rebind the abstract types otherwise)
+      private val ctx = c.asInstanceOf[Aliases with scala.reflect.macros.whitebox.Context {val universe: u.type}]
 
-        // I think there's a bug in subtyping -- shouldn't be necessary to specify the Aliases parent explicitly
-        // (but somehow we don't rebind the abstract types otherwise)
-        private val ctx = c.asInstanceOf[Aliases with scala.reflect.macros.whitebox.Context {val universe: u.type}]
+      def asyncMacroSymbol: Symbol = ctx.macroApplication.symbol
+      def enclosingOwner: Symbol = ctx.internal.enclosingOwner
 
-        val body: Tree = body0.asInstanceOf[ctx.Tree]
-
-        // This member is required by `AsyncTransform`:
-        val asyncBase: AsyncBase                                   = AsyncBase.this
-        def asyncMacroSymbol: Symbol = ctx.macroApplication.symbol
-        def enclosingOwner: Symbol = ctx.internal.enclosingOwner
-
-        // These members are required by `ExprBuilder`:
-        val futureSystem: FutureSystem = AsyncBase.this.futureSystem
-        val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
-        var containsAwait: Tree => Boolean = containsAwaitCached(body)
-        lazy val macroPos: Position = asyncMacroSymbol.pos.makeTransparent
-
-        // a few forwarders to context, since they are not easily available through SymbolTable
-        def typecheck(tree: Tree): Tree = ctx.typecheck(tree)
-        def abort(pos: Position, msg: String): Nothing = ctx.abort(pos, msg)
-        def error(pos: Position, msg: String): Unit = ctx.error(pos, msg)
-        val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi = ctx.internal
-      }
-
-
-    val asyncMacro: AsyncTransform = AsyncMacro(body.tree)
+      // a few forwarders to context, since they are not easily available through SymbolTable
+      def typecheck(tree: Tree): Tree = ctx.typecheck(tree)
+      def abort(pos: Position, msg: String): Nothing = ctx.abort(pos, msg)
+      def error(pos: Position, msg: String): Unit = ctx.error(pos, msg)
+      val typingTransformers: (Aliases with Internals {val universe: u.type})#ContextInternalApi = ctx.internal
+    }
 
     // TODO use same pattern as `val ctx` above to avoid further casts
-    val code = asyncMacro.asyncTransform[T](execContext.tree.asInstanceOf[asyncMacro.u.Tree])(c.weakTypeTag[T].asInstanceOf[asyncMacro.u.WeakTypeTag[T]])
+    val code = asyncMacro.asyncTransform[T](body.tree.asInstanceOf[asyncMacro.u.Tree], execContext.tree.asInstanceOf[asyncMacro.u.Tree])(c.weakTypeTag[T].asInstanceOf[asyncMacro.u.WeakTypeTag[T]])
     AsyncUtils.vprintln(s"async state machine transform expands to:\n $code")
 
     // Mark range positions for synthetic code as transparent to allow some wiggle room for overlapping ranges

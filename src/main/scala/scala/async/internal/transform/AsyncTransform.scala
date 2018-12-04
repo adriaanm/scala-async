@@ -4,14 +4,14 @@
 
 package scala.async.internal.transform
 
-import scala.reflect.internal.Flags
+import scala.async.internal.AsyncBase
+import scala.reflect.internal.{Flags, SymbolTable}
 
-trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
-  import typingTransformers.{TypingTransformApi, typingTransform}
+abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
   import u._
+  import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform[T](execContext: Tree)
-                       (resultType: WeakTypeTag[T]): Tree = {
+  def asyncTransform[T](body: Tree, execContext: Tree)(resultType: WeakTypeTag[T]): Tree = {
 
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
@@ -28,7 +28,7 @@ trait AsyncTransform extends AnfTransform with AsyncAnalysis with Lifter with Li
     val anfTree = futureSystemOps.postAnfTransform(anfTree0)
 
     cleanupContainsAwaitAttachments(anfTree)
-    containsAwait = containsAwaitCached(anfTree)
+    markContains(anfTree)
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(futureSystemOps.tryType[Any])
 
