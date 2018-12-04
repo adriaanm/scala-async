@@ -375,7 +375,7 @@ private[async] trait AnfTransform extends TransformUtils {
           case r1 :: Nil =>
             // { var matchRes = _; ....; matchRes }
             (r1 +: statsExpr0.reverse) :+ atPos(tree.pos)(gen.mkAttributedIdent(r1.symbol))
-          case _ => error(macroPos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
+          case _ => error(asyncPos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
         }
       }
 

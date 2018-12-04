@@ -11,13 +11,14 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform[T](body: Tree, execContext: Tree)(resultType: WeakTypeTag[T]): Tree = {
+  def asyncTransform[T](body: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: WeakTypeTag[T]): Tree = {
 
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
     // This implicit propagates the annotated type in the type tag.
     implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(resultType.tpe))
 
+    markContains(body) // TODO: is this needed?
     reportUnsupportedAwaits(body)
 
     // Transform to A-normal form:
@@ -59,7 +60,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       // or can we skip the type checking entirely and just create a symbol?
       {
         val Block(cd1 :: Nil, _) =
-          typingTransform(atMacroPos(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
+          typingTransform(atAsyncPos(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
 
         cd1.asInstanceOf[ClassDef]
       }
@@ -90,7 +91,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
     def startStateMachine: Tree = {
       val stateMachineSpliced: Tree =
-        spliceMethodBodies(liftedFields, stateMachine, atMacroPos(asyncBlock.onCompleteHandler[T]))
+        spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler[T]), enclosingOwner)
 
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
 
@@ -116,14 +117,13 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
   def logDiagnostics(anfTree: Tree, block: AsyncBlock, states: Seq[String]): Unit = {
     def location = try {
-      macroPos.source.path
+      asyncPos.source.path
     } catch {
       case _: UnsupportedOperationException =>
-        macroPos.toString
+        asyncPos.toString
     }
 
     AsyncUtils.vprintln(s"In file '$location':")
-    AsyncUtils.vprintln(s"${asyncMacroSymbol}")
     AsyncUtils.vprintln(s"ANF transform expands to:\n $anfTree")
     states foreach (s => AsyncUtils.vprintln(s))
     AsyncUtils.vprintln("===== DOT =====")
@@ -138,7 +138,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
    *  @param  applyBody  tree of onComplete handler (`apply` method)
    *  @return            transformed `ClassDef` tree of the state machine class
    */
-  def spliceMethodBodies(liftables: List[Tree], tree: ClassDef, applyBody: Tree): Tree = {
+  def spliceMethodBodies(liftables: List[Tree], tree: ClassDef, applyBody: Tree, enclosingOwner: Symbol): Tree = {
     val liftedSyms = liftables.map(_.symbol).toSet
     val stateMachineClass = tree.symbol
     liftedSyms.foreach {

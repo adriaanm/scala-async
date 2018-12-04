@@ -42,18 +42,20 @@ abstract class AsyncBase {
                                  (body: c.Expr[T])
                                  (execContext: c.Expr[futureSystem.ExecContext]): c.Expr[futureSystem.Fut[T]] = {
 
+    // I think there's a bug in subtyping -- shouldn't be necessary to specify the Aliases parent explicitly
+    // (but somehow we don't rebind the abstract types otherwise)
+    val ctx = c.asInstanceOf[Aliases with scala.reflect.macros.whitebox.Context {val universe: asyncMacro.u.type}]
+    val asyncMacroSymbol = ctx.macroApplication.symbol
+
     object asyncMacro extends AsyncTransform(AsyncBase.this, c.universe.asInstanceOf[scala.reflect.internal.SymbolTable]) {
       // The actual transformation happens in terms of the internal compiler data structures.
       // We hide the macro context from the classes in the transform package,
       // because they're basically a compiler plugin packaged as a macro.
       import u._
 
-      // I think there's a bug in subtyping -- shouldn't be necessary to specify the Aliases parent explicitly
-      // (but somehow we don't rebind the abstract types otherwise)
-      private val ctx = c.asInstanceOf[Aliases with scala.reflect.macros.whitebox.Context {val universe: u.type}]
-
-      def asyncMacroSymbol: Symbol = ctx.macroApplication.symbol
-      def enclosingOwner: Symbol = ctx.internal.enclosingOwner
+      val Async_async = asyncMethod(u)(asyncMacroSymbol)
+      val Async_await = awaitMethod(u)(asyncMacroSymbol)
+      val asyncPos    = asyncMacroSymbol.pos.makeTransparent
 
       // a few forwarders to context, since they are not easily available through SymbolTable
       def typecheck(tree: Tree): Tree = ctx.typecheck(tree)
@@ -62,8 +64,9 @@ abstract class AsyncBase {
       val typingTransformers: (Aliases with Internals {val universe: u.type})#ContextInternalApi = ctx.internal
     }
 
-    // TODO use same pattern as `val ctx` above to avoid further casts
-    val code = asyncMacro.asyncTransform[T](body.tree.asInstanceOf[asyncMacro.u.Tree], execContext.tree.asInstanceOf[asyncMacro.u.Tree])(c.weakTypeTag[T].asInstanceOf[asyncMacro.u.WeakTypeTag[T]])
+    val enclosingOwner = ctx.internal.enclosingOwner
+    val code = asyncMacro.asyncTransform[T](body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T])
+
     AsyncUtils.vprintln(s"async state machine transform expands to:\n $code")
 
     // Mark range positions for synthetic code as transparent to allow some wiggle room for overlapping ranges

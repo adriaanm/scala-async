@@ -16,8 +16,9 @@ private[async] trait AsyncContext {
   val u: SymbolTable
   import u._
 
-  def asyncMacroSymbol: Symbol
-  def enclosingOwner: Symbol
+  val asyncPos: Position
+  val Async_async: Symbol
+  val Async_await: Symbol
 
   // macro context interface -- the rest is meant to be independent of our being a macro (planning to move async into the compiler)
   def abort(pos: Position, msg: String): Nothing
@@ -43,8 +44,7 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
-  lazy val macroPos: Position = asyncMacroSymbol.pos.makeTransparent
-  def atMacroPos(t: Tree): Tree = atPos(macroPos)(t)
+  def atAsyncPos(t: Tree): Tree = atPos(asyncPos)(t)
 
   def literalNull = Literal(Constant(null))
 
@@ -137,11 +137,11 @@ trait PhasedTransform extends AsyncContext {
       // Approximately:
       // q"new ${valueClass}[$..targs](argZero)"
       val target: Tree = gen.mkAttributedSelect(
-                                                 typecheck(atMacroPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
+                                                 typecheck(atAsyncPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
 
       val zero = gen.mkMethodCall(target, argZero :: Nil)
       // restore the original type which we might otherwise have weakened with `baseType` above
-      typecheck(atMacroPos(gen.mkCast(zero, tp)))
+      typecheck(atAsyncPos(gen.mkCast(zero, tp)))
     } else {
       gen.mkZero(tp)
     }
@@ -184,9 +184,6 @@ private[async] trait TransformUtils extends PhasedTransform {
     if (emitTryCatch) Try(block, catches, finalizer) else block
 
   lazy val IllegalStateExceptionClass = rootMirror.staticClass("java.lang.IllegalStateException")
-
-  private lazy val Async_async   = asyncBase.asyncMethod(u)(asyncMacroSymbol)
-  private lazy val Async_await   = asyncBase.awaitMethod(u)(asyncMacroSymbol)
 
   def isAsync(fun: Tree) = fun.symbol == Async_async
   def isAwait(fun: Tree) = fun.symbol == Async_await
@@ -382,19 +379,17 @@ private[async] trait TransformUtils extends PhasedTransform {
     *
     * Requires markContainsAwaitTraverser has previously traversed `t``
     **/
-  final def containsAwait(t: Tree): Boolean =
-    if (asyncMacroSymbol == null) false
-    else {
-      object traverser extends Traverser {
-        var containsAwait = false
-        override def traverse(tree: Tree): Unit =
-          if (tree.hasAttachment[NoAwait.type]) {} // safe to skip
-          else if (tree.hasAttachment[ContainsAwait.type]) containsAwait = true
-          else if (markContainsAwaitTraverser.shouldAttach(t)) super.traverse(tree)
-      }
-      traverser.traverse(t)
-      traverser.containsAwait
+  final def containsAwait(t: Tree): Boolean = {
+    object traverser extends Traverser {
+      var containsAwait = false
+      override def traverse(tree: Tree): Unit =
+        if (tree.hasAttachment[NoAwait.type]) {} // safe to skip
+        else if (tree.hasAttachment[ContainsAwait.type]) containsAwait = true
+        else if (markContainsAwaitTraverser.shouldAttach(t)) super.traverse(tree)
     }
+    traverser.traverse(t)
+    traverser.containsAwait
+  }
 
   def markContains(t: Tree) = markContainsAwaitTraverser.traverse(t)
 
