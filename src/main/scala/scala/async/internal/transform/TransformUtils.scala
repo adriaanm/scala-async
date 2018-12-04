@@ -26,13 +26,7 @@ private[async] trait AsyncContext {
   def typecheck(tree: Tree): Tree
   val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
 
-  // TODO: rework
-  lazy val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
-    val names = new AsyncNames[u.type](u)
-    rootMirror.RootClass.attachments.update(names)
-    names
-  }
-
+  val asyncNames: AsyncNames[u.type]
   object name extends asyncNames.AsyncName {
     def fresh(name: TermName): TermName = freshenIfNeeded(name)
     def fresh(name: String): String = currentFreshNameCreator.newName(name) // TODO ok? was c.freshName

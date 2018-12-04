@@ -8,6 +8,7 @@ import java.util.function.IntConsumer
 
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
+
 import scala.reflect.internal.Flags._
 
 trait LiveVariables extends ExprBuilder {

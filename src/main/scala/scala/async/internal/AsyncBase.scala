@@ -53,6 +53,13 @@ abstract class AsyncBase {
       // because they're basically a compiler plugin packaged as a macro.
       import u._
 
+      // TODO: rework
+      val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
+        val names = new AsyncNames[u.type](u)
+        rootMirror.RootClass.attachments.update(names)
+        names
+      }
+
       val Async_async = asyncMethod(u)(asyncMacroSymbol)
       val Async_await = awaitMethod(u)(asyncMacroSymbol)
       val asyncPos    = asyncMacroSymbol.pos.makeTransparent
