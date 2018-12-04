@@ -18,7 +18,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     // This implicit propagates the annotated type in the type tag.
     implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(resultType.tpe))
 
-    markContains(body) // TODO: is this needed?
+    markContainsAwait(body) // TODO: is this needed?
     reportUnsupportedAwaits(body)
 
     // Transform to A-normal form:
@@ -29,7 +29,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     val anfTree = futureSystemOps.postAnfTransform(anfTree0)
 
     cleanupContainsAwaitAttachments(anfTree)
-    markContains(anfTree)
+    markContainsAwait(anfTree)
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(futureSystemOps.tryType[Any])
 

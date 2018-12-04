@@ -372,7 +372,7 @@ private[async] trait TransformUtils extends PhasedTransform {
     * If the derived tree contains synthetic wrapper trees, these will be recursed into
     * in search of a sub tree that was decorated with the cached answer.
     *
-    * Requires markContainsAwaitTraverser has previously traversed `t``
+    * Requires markContainsAwaitTraverser has previously traversed `t`.
     **/
   final def containsAwait(t: Tree): Boolean = {
     object traverser extends Traverser {
@@ -386,7 +386,7 @@ private[async] trait TransformUtils extends PhasedTransform {
     traverser.containsAwait
   }
 
-  def markContains(t: Tree) = markContainsAwaitTraverser.traverse(t)
+  def markContainsAwait(t: Tree) = markContainsAwaitTraverser.traverse(t)
 
   private object markContainsAwaitTraverser extends Traverser {
     def shouldAttach(t: Tree) = !treeCannotContainAwait(t)
