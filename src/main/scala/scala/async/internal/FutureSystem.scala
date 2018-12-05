@@ -38,7 +38,7 @@ trait FutureSystem {
 
     def promType[A: WeakTypeTag]: Type
     def tryType[A: WeakTypeTag]: Type
-    def execContextType: Type
+//    def execContextType: Type
     def stateMachineClassParents: List[Type] = Nil
 
     /** Create an empty promise */
@@ -102,7 +102,7 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
     def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
-    def execContextType: Type = weakTypeOf[ExecutionContext]
+//    def execContextType: Type = weakTypeOf[ExecutionContext]
 
     def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {
       Promise[A]()

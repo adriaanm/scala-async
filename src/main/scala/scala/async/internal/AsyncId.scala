@@ -58,7 +58,7 @@ object IdentityFutureSystem extends FutureSystem {
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Box[A]]
     def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
-    def execContextType: Type = weakTypeOf[Unit]
+//    def execContextType: Type = weakTypeOf[Unit]
 
     def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {
       new Prom[A]()

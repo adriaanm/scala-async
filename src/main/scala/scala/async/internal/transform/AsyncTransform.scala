@@ -11,7 +11,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform[T](body0: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: WeakTypeTag[T]): Tree = {
+  def asyncTransform[T](body0: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: Type): Tree = {
     val body = body0 match {
       case Function(Nil, body) => body // after uncurry, need to be wrapped in a fun0
       case body => body
