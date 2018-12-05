@@ -72,7 +72,9 @@ abstract class AsyncBase {
     }
 
     val enclosingOwner = ctx.internal.enclosingOwner
-    val code = asyncMacro.asyncTransform[T](body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T])
+    val code =
+      try asyncMacro.asyncTransform[T](body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T])
+      catch { case te: ctx.universe.TypeError => ctx.info(enclosingOwner.pos, te.getStackTrace.mkString("\n"), true); ??? }
 
     AsyncUtils.vprintln(s"async state machine transform expands to:\n $code")
 

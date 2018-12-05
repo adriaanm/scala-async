@@ -423,9 +423,12 @@ class LateExpansion {
       val run = new Run
       val source = newSourceFile(code)
       //    TreeInterrogation.withDebug {
-      run.compileSources(source :: Nil)
+      try run.compileSources(source :: Nil)
+      catch { case e: Exception => e.printStackTrace()}
+      finally println(reporter.infos)
       //    }
       Assert.assertTrue(reporter.infos.mkString("\n"), !reporter.hasErrors)
+      println(reporter.infos)
       val loader = new URLClassLoader(Seq(new File(settings.outdir.value).toURI.toURL), global.getClass.getClassLoader)
       val cls = loader.loadClass("Test")
       cls.getMethod("test").invoke(null)
@@ -456,7 +459,7 @@ abstract class LatePlugin extends Plugin {
             localTyper.typed(Apply(TypeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(sel.tpe) :: Nil), sel :: Nil))
           case dd: DefDef if dd.symbol.hasAnnotation(lateAsyncSym) => atOwner(dd.symbol) {
             deriveDefDef(dd){ rhs: Tree =>
-              val invoke = Apply(TypeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, asyncSym), TypeTree(rhs.tpe) :: Nil), List(rhs))
+              val invoke = Apply(TypeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, asyncSym), TypeTree(rhs.tpe) :: Nil), List(Function(Nil, rhs)))
               localTyper.typed(atPos(dd.pos)(invoke))
             }
           }
@@ -480,8 +483,8 @@ abstract class LatePlugin extends Plugin {
       }
     }
 
-    override val runsAfter: List[String] = "uncurry" :: Nil
-    override val runsRightAfter: Option[String] = Some("uncurry")
+    override val runsAfter: List[String] = "specialize" :: Nil
+    override val runsRightAfter: Option[String] = Some("specialize")
     override val phaseName: String = "postpatmat"
 
   })

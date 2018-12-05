@@ -100,7 +100,7 @@ trait ExprBuilder extends TransformUtils {
       val tryGetOrCallOnComplete: List[Tree] =
         if (futureSystemOps.continueCompletedFutureOnSameThread) {
           val tempName = name.completed
-          val initTemp = ValDef(NoMods, tempName, TypeTree(futureSystemOps.tryType[Any]), futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
+          val initTemp = ValDef(NoMods, tempName, TypeTree(transformType(futureSystemOps.tryType[Any])), futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
           val null_ne = Select(Literal(Constant(null)), TermName("ne"))
           val ifTree =
             If(Apply(null_ne, Ident(tempName) :: Nil),

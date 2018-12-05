@@ -69,16 +69,21 @@ trait PhasedTransform extends AsyncContext {
       if (useClass) symbolOf[scala.runtime.AbstractFunction1[Any, Any]]
       else symbolOf[scala.Function1[Any, Any]]
 
-    appliedType(fun, argTp, typeOf[Unit])
+    appliedType(fun, transformType(argTp), typeOf[Unit])
   }
   def apply1ToUnitDefDef(argTp: Type): DefDef = {
-    val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
+    val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(transformType(argTp)), EmptyTree)))
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
 
+  def transformType(tp: Type) = {
+    val res = uncurry.uncurry(tp)
+    println(s"transform type $tp TO $res")
+    res
+  }
 
   def mkAsInstanceOf(qual: Tree, tp: Type) =
-    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(tp)))
+    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(transformType(tp))))
 
   private def tpeOf(t: Tree): Type = t match {
     case _ if t.tpe != null                      => t.tpe

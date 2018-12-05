@@ -12,7 +12,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
   def anfTransform(tree: Tree, owner: Symbol): Block = {
     // Must prepend the () for issue #31.
-    val block = typecheck(atPos(tree.pos)(Block(List(literalUnit), tree))).setType(tree.tpe)
+    val block = typecheck(atPos(tree.pos)(Block(List(literalUnit), tree))).setType(transformType(tree.tpe))
 
     sealed abstract class AnfMode
     case object Anf extends AnfMode

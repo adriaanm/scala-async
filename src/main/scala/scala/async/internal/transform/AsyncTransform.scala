@@ -11,8 +11,11 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform[T](body: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: WeakTypeTag[T]): Tree = {
-
+  def asyncTransform[T](body0: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: WeakTypeTag[T]): Tree = {
+    val body = body0 match {
+      case Function(Nil, body) => body // after uncurry, need to be wrapped in a fun0
+      case body => body
+    }
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
     // This implicit propagates the annotated type in the type tag.
@@ -39,13 +42,13 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     val stateMachine: ClassDef = {
       val body: List[Tree] = {
         val stateVar = ValDef(Modifiers(Flags.MUTABLE | Flags.PRIVATE | Flags.LOCAL), name.state, TypeTree(definitions.IntTpe), Literal(Constant(StateAssigner.Initial)))
-        val resultAndAccessors = mkMutableField(futureSystemOps.promType[T](uncheckedBoundsResultTag), name.result, futureSystemOps.createProm[T](uncheckedBoundsResultTag).tree)
+        val resultAndAccessors = mkMutableField(transformType(futureSystemOps.promType[T](uncheckedBoundsResultTag)), name.result, futureSystemOps.createProm[T](uncheckedBoundsResultTag).tree)
         val execContextValDef = ValDef(NoMods, name.execContext, TypeTree(), execContext)
 
         List(emptyConstructor, stateVar) ++ resultAndAccessors ++ List(execContextValDef) ++ List(applyDefDefDummyBody, apply0DefDef)
       }
 
-      val customParents = futureSystemOps.stateMachineClassParents
+      val customParents = futureSystemOps.stateMachineClassParents map transformType
       // prefer extending a class to reduce the class file size of the state machine.
       // ... unless a custom future system already extends some class
       val useClass = customParents.forall(_.typeSymbol.asClass.isTrait)
