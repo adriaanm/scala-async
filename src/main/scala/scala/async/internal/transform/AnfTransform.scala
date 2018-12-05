@@ -149,13 +149,13 @@ private[async] trait AnfTransform extends TransformUtils {
         }
 
         def defineVar(name: TermName, tp: Type, pos: Position): ValDef = {
-          val sym = currentOwner.newTermSymbol(name, pos, Flags.MUTABLE | Flags.SYNTHETIC).setInfo(uncheckedBounds(tp))
+          val sym = currentOwner.newTermSymbol(name, pos, Flags.MUTABLE | Flags.SYNTHETIC).setInfo(uncheckedBounds(transformType(tp)))
           ValDef(sym, mkZero(uncheckedBounds(tp))).setType(NoType).setPos(pos)
         }
       }
 
       def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
-        val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
+        val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(uncheckedBounds(transformType(lhs.tpe)))
         ValDef(sym, lhs.changeOwner((currentOwner, sym))).setType(NoType).setPos(pos)
       }
 
