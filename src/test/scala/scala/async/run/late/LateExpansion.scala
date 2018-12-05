@@ -400,13 +400,15 @@ class LateExpansion {
     f
   }
   def run(code: String): Any = {
-    // settings.processArgumentString("-Xprint:patmat,postpatmat,jvm -Ybackend:GenASM -nowarn")
+//     settings.processArgumentString("-Xprint:patmat,postpatmat,jvm -Ybackend:GenASM -nowarn")
     val out = createTempDir()
     try {
       val reporter = new StoreReporter
       val settings = new Settings(println(_))
       settings.outdir.value = out.getAbsolutePath
       settings.embeddedDefaults(getClass.getClassLoader)
+      settings.printtypes.value = true
+      settings.debug.value = true
       val isInSBT = !settings.classpath.isSetByUser
       if (isInSBT) settings.usejavacp.value = true
       val global = new Global(settings, reporter) {
@@ -478,7 +480,7 @@ abstract class LatePlugin extends Plugin {
     override def newPhase(prev: Phase): Phase = new StdPhase(prev) {
       override def apply(unit: CompilationUnit): Unit = {
         val translated = newTransformer(unit).transformUnit(unit)
-        //println(show(unit.body))
+        println(show(unit.body))
         translated
       }
     }
