@@ -47,8 +47,8 @@ trait PhasedTransform extends AsyncContext {
   def typeEqualsUnit(tp: Type) = tp =:= definitions.UnitTpe
   def castToUnit(t: Tree) = gen.mkCast(t, definitions.UnitTpe)
 
-  def assignUnitType(t: Tree): t.type = internal.setType(t, definitions.UnitTpe)
-  def setUnitMethodInfo(sym: Symbol): sym.type = internal.setInfo(sym, MethodType(Nil, definitions.UnitTpe))
+  def assignUnitType(t: Tree): t.type = t.setType(definitions.UnitTpe)
+  def setUnitMethodInfo(sym: Symbol): sym.type = sym.setInfo(MethodType(Nil, definitions.UnitTpe))
 
   def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
   def isNothingClass(sym: Symbol) = sym == definitions.NothingClass
@@ -69,10 +69,10 @@ trait PhasedTransform extends AsyncContext {
       if (useClass) symbolOf[scala.runtime.AbstractFunction1[Any, Any]]
       else symbolOf[scala.Function1[Any, Any]]
 
-    appliedType(fun, transformType(argTp), typeOf[Unit])
+    appliedType(fun, argTp, typeOf[Unit])
   }
   def apply1ToUnitDefDef(argTp: Type): DefDef = {
-    val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(transformType(argTp)), EmptyTree)))
+    val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
 
@@ -83,7 +83,7 @@ trait PhasedTransform extends AsyncContext {
   }
 
   def mkAsInstanceOf(qual: Tree, tp: Type) =
-    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(transformType(tp))))
+    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(tp)))
 
   private def tpeOf(t: Tree): Type = t match {
     case _ if t.tpe != null                      => t.tpe
@@ -446,7 +446,7 @@ private[async] trait TransformUtils extends PhasedTransform {
           case LabelDef(name, params, rhs) =>
             val rhs1 = api.recur(rhs)
             if (rhs1.tpe =:= UnitTpe) {
-              internal.setInfo(tree.symbol, internal.methodType(tree.symbol.info.paramLists.head, UnitTpe))
+              tree.symbol.info = internal.methodType(tree.symbol.info.paramLists.head, UnitTpe)
               treeCopy.LabelDef(tree, name, params, rhs1)
             } else {
               treeCopy.LabelDef(tree, name, params, rhs1)
@@ -455,7 +455,7 @@ private[async] trait TransformUtils extends PhasedTransform {
             val stats1 = stats map api.recur
             val expr1 = api.recur(expr)
             if (expr1.tpe =:= UnitTpe)
-              internal.setType(treeCopy.Block(tree, stats1, expr1), UnitTpe)
+              treeCopy.Block(tree, stats1, expr1).setType(UnitTpe)
             else
               treeCopy.Block(tree, stats1, expr1)
           case If(cond, thenp, elsep) =>
@@ -463,22 +463,22 @@ private[async] trait TransformUtils extends PhasedTransform {
             val thenp1 = api.recur(thenp)
             val elsep1 = api.recur(elsep)
             if (thenp1.tpe =:= definitions.UnitTpe && elsep.tpe =:= UnitTpe)
-              internal.setType(treeCopy.If(tree, cond1, thenp1, elsep1), UnitTpe)
+              treeCopy.If(tree, cond1, thenp1, elsep1).setType(UnitTpe)
             else
               treeCopy.If(tree, cond1, thenp1, elsep1)
           case Apply(fun, args) if isLabel(fun.symbol) =>
-            internal.setType(treeCopy.Apply(tree, api.recur(fun), args map api.recur), UnitTpe)
+            treeCopy.Apply(tree, api.recur(fun), args map api.recur).setType(UnitTpe)
           case vd @ ValDef(mods, name, tpt, rhs) if isCaseTempVal(vd.symbol) =>
             def addUncheckedBounds(t: Tree) = {
               typingTransform(t, owner) {
                 (tree, api) =>
-                  if (tree.tpe == null) tree else internal.setType(api.default(tree), uncheckedBoundsIfNeeded(tree.tpe))
+                  if (tree.tpe == null) tree else api.default(tree).setType(uncheckedBoundsIfNeeded(tree.tpe))
               }
 
             }
             val uncheckedRhs = addUncheckedBounds(api.recur(rhs))
             val uncheckedTpt = addUncheckedBounds(tpt)
-            internal.setInfo(vd.symbol, uncheckedBoundsIfNeeded(vd.symbol.info))
+            vd.symbol.info = uncheckedBoundsIfNeeded(vd.symbol.info)
             treeCopy.ValDef(vd, mods, name, uncheckedTpt, uncheckedRhs)
           case t => api.default(t)
         }
@@ -511,10 +511,10 @@ private[async] trait TransformUtils extends PhasedTransform {
     if (ld eq ld2) ld
     else {
       val info2 = ld2.symbol.info match {
-        case MethodType(params, p) => internal.methodType(params, rhs2.tpe)
+        case MethodType(params, p) => MethodType(params, rhs2.tpe)
         case t => t
       }
-      internal.setInfo(ld2.symbol, info2)
+      ld2.symbol.info = info2
       ld2
     }
   }

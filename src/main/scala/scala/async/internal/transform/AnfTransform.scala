@@ -156,7 +156,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
       def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
         val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(uncheckedBounds(lhs.tpe))
-        ValDef(sym, internal.changeOwner(lhs, currentOwner, sym)).setType(NoType).setPos(pos)
+        ValDef(sym, lhs.changeOwner((currentOwner, sym))).setType(NoType).setPos(pos)
       }
 
       object _anf {
@@ -353,7 +353,7 @@ private[async] trait AnfTransform extends TransformUtils {
                     // setType needed for LateExpansion.shadowingRefinedType test case. There seems to be an inconsistency
                     // in the trees after pattern matcher.
                     // TODO miminize the problem in patmat and fix in scalac.
-                    typedPos(tree.pos)(Block(Assign(Ident(temp), transform(internal.setType(arg, fun.tpe.paramLists.head.head.info))) :: Nil, treeCopy.Apply(tree, fun, Nil)))
+                    typedPos(tree.pos)(Block(Assign(Ident(temp), transform(arg.setType(transformType(fun.tpe.paramLists.head.head.info)))) :: Nil, treeCopy.Apply(tree, fun, Nil)))
                 case Block(stats, expr: Apply) if isLabel(expr.symbol) =>
                   superTransform match {
                     case Block(stats0, Block(stats1, expr1)) =>

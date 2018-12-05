@@ -19,7 +19,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
     // This implicit propagates the annotated type in the type tag.
-    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(resultType.tpe))
+    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
 
     markContainsAwait(body) // TODO: is this needed?
     reportUnsupportedAwaits(body)
@@ -34,7 +34,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     cleanupContainsAwaitAttachments(anfTree)
     markContainsAwait(anfTree)
 
-    val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(futureSystemOps.tryType[Any])
+    val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(transformType(futureSystemOps.tryType[Any]))
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
@@ -55,7 +55,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
       // We extend () => Unit so we can pass this class as the by-name argument to `Future.apply`.
       // See SI-1247 for the the optimization that avoids creation.
-      val funParents = List(function1ToUnit(futureSystemOps.tryType[Any], useClass), function0ToUnit)
+      val funParents = List(function1ToUnit(transformType(futureSystemOps.tryType[Any]), useClass), function0ToUnit)
 
       // TODO: after erasure we have to change the order of these parents etc
       val templ = Template((customParents ::: funParents).map(TypeTree(_)), noSelfType, body)

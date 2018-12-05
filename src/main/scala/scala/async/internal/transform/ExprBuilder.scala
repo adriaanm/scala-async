@@ -115,7 +115,7 @@ trait ExprBuilder extends TransformUtils {
 
     private def tryGetTree(tryReference: => Tree) = {
       val tryyGet = futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree
-      Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, awaitable.resultType))
+      Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, transformType(awaitable.resultType)))
     }
 
     /* if (tr.isFailure)
@@ -132,7 +132,7 @@ trait ExprBuilder extends TransformUtils {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(futureSystemOps.completeProm[T](
             Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)),
-            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, futureSystemOps.tryType[T]))).tree),
+            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType[T])))).tree),
             Return(literalUnit)),
           getAndUpdateState
         )
