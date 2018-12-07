@@ -619,8 +619,9 @@ private[async] trait TransformUtils extends PhasedTransform {
       currentOwner = callsiteTyper.context.owner
       curTree = global.EmptyTree
 
-      if (!isPastErasure) {
-        localTyper = global.analyzer.newTyper(callsiteTyper.context.make(unit = callsiteTyper.context.unit))
+      localTyper = {
+        val ctx: global.analyzer.Context = callsiteTyper.context.make(unit = callsiteTyper.context.unit)
+        (if (phase.erasedTypes) global.erasure.newTyper(ctx.asInstanceOf[global.erasure.Context]) else global.analyzer.newTyper(ctx)).asInstanceOf[global.analyzer.Typer]
       }
 
       val api = new TypingTransformApi {
