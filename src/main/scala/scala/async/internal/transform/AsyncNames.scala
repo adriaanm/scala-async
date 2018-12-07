@@ -2,7 +2,7 @@
  * Copyright (C) 2012-2018 Lightbend Inc. <http://www.lightbend.com>
  */
 
-package scala.async.internal
+package scala.async.internal.transform
 
 import java.util.concurrent.atomic.AtomicInteger
 

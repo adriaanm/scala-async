@@ -4,7 +4,7 @@
 
 package scala.async.internal
 
-import scala.async.internal.transform.{AsyncTransform, AsyncUtils}
+import scala.async.internal.transform.{AsyncNames, AsyncTransform, AsyncUtils}
 import scala.reflect.api.Universe
 import scala.reflect.internal.annotations.compileTimeOnly
 import scala.reflect.macros.Aliases

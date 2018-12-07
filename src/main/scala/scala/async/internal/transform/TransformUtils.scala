@@ -6,7 +6,7 @@ package scala.async.internal.transform
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.internal.{Flags, SymbolTable}
-import scala.async.internal.{AsyncBase, AsyncNames}
+import scala.async.internal.AsyncBase
 import scala.tools.nsc.Global
 import scala.language.existentials
 
