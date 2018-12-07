@@ -5,9 +5,9 @@ package scala.async.internal.transform
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.reflect.macros.{Aliases, Internals}
 import scala.reflect.internal.{Flags, SymbolTable}
 import scala.async.internal.{AsyncBase, AsyncNames}
+import scala.tools.nsc.Global
 import scala.language.existentials
 
 private[async] trait AsyncContext {
@@ -25,7 +25,6 @@ private[async] trait AsyncContext {
   def abort(pos: Position, msg: String): Nothing
   def error(pos: Position, msg: String): Unit
   def typecheck(tree: Tree): Tree
-  val typingTransformers: (Aliases with Internals{val universe: u.type})#ContextInternalApi
 
   val asyncNames: AsyncNames[u.type]
   object name extends asyncNames.AsyncName {
@@ -541,6 +540,90 @@ private[async] trait TransformUtils extends PhasedTransform {
       case _ => None
     }
   }
+
+
+  val typingTransformers: TypingTransformers
+
+  abstract class TypingTransformers extends scala.tools.nsc.transform.TypingTransformers {
+    val global: u.type with Global = u.asInstanceOf[u.type with Global]
+
+    val callsiteTyper: global.analyzer.Typer
+
+    trait TransformApi {
+      /** Calls the current transformer on the given tree.
+        *  Current transformer = argument to the `transform` call.
+        */
+      def recur(tree: Tree): Tree
+
+      /** Calls the default transformer on the given tree.
+        *  Default transformer = recur into tree's children and assemble the results.
+        */
+      def default(tree: Tree): Tree
+    }
+
+    /** Functions that are available during [[typingTransform]].
+      *  @see [[typingTransform]]
+      */
+    trait TypingTransformApi extends TransformApi {
+      /** Temporarily pushes the given symbol onto the owner stack, creating a new local typer,
+        *  invoke the given operation and then rollback the changes to the owner stack.
+        */
+      def atOwner[T](owner: Symbol)(op: => T): T
+
+      /** Temporarily pushes the given tree onto the recursion stack, and then calls `atOwner(symbol)(trans)`.
+        */
+      def atOwner[T](tree: Tree, owner: Symbol)(op: => T): T
+
+      /** Returns the symbol currently on the top of the owner stack.
+        *  If we're not inside any `atOwner` call, then macro application's context owner will be used.
+        */
+      def currentOwner: Symbol
+
+      /** Typechecks the given tree using the local typer currently on the top of the owner stack.
+        *  If we're not inside any `atOwner` call, then macro application's callsite typer will be used.
+        */
+      def typecheck(tree: Tree): Tree
+    }
+
+    class HofTransformer(hof: (Tree, TransformApi) => Tree) extends Transformer {
+      val api = new TransformApi {
+        def recur(tree: Tree): Tree = hof(tree, this)
+        def default(tree: Tree): Tree = superTransform(tree)
+      }
+      def superTransform(tree: Tree) = super.transform(tree)
+      override def transform(tree: Tree): Tree = hof(tree, api).asInstanceOf[global.Tree]
+    }
+
+    //    def transform(tree: Tree)(transformer: (Tree, TransformApi) => Tree): Tree = new HofTransformer(transformer).transform(tree)
+
+    class HofTypingTransformer(hof: (Tree, TypingTransformApi) => Tree) extends TypingTransformer(callsiteTyper.context.unit) { self =>
+      currentOwner = callsiteTyper.context.owner
+      curTree = global.EmptyTree
+
+      if (!isPastErasure) {
+        localTyper = global.analyzer.newTyper(callsiteTyper.context.make(unit = callsiteTyper.context.unit))
+      }
+
+      val api = new TypingTransformApi {
+        def recur(tree: Tree): Tree = hof(tree, this)
+        def default(tree: Tree): Tree = superTransform(tree)
+        def atOwner[T](owner: Symbol)(op: => T): T = self.atOwner(owner.asInstanceOf[global.Symbol])(op)
+        def atOwner[T](tree: Tree, owner: Symbol)(op: => T): T = self.atOwner(tree.asInstanceOf[global.Tree], owner.asInstanceOf[global.Symbol])(op)
+        def currentOwner: Symbol = self.currentOwner
+        def typecheck(tree: Tree): Tree = localTyper.typed(tree.asInstanceOf[global.Tree])
+      }
+      def superTransform(tree: Tree) = super.transform(tree.asInstanceOf[global.Tree])
+      override def transform(tree: global.Tree): global.Tree = hof(tree, api).asInstanceOf[global.Tree]
+    }
+
+    def typingTransform(tree: Tree)(transformer: (Tree, TypingTransformApi) => Tree): Tree = new HofTypingTransformer(transformer).transform(tree.asInstanceOf[global.Tree])
+
+    def typingTransform(tree: Tree, owner: Symbol)(transformer: (Tree, TypingTransformApi) => Tree): Tree = {
+      val trans = new HofTypingTransformer(transformer)
+      trans.atOwner(owner.asInstanceOf[global.Symbol])(trans.transform(tree.asInstanceOf[global.Tree]))
+    }
+  }
+
 }
 
 case object ContainsAwait

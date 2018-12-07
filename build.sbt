@@ -21,7 +21,7 @@ repoName := "async"
 version := "0.9.8-SNAPSHOT"
 
 libraryDependencies += "org.scala-lang" % "scala-reflect" % scalaVersion.value % "provided"
-libraryDependencies += "org.scala-lang" % "scala-compiler" % scalaVersion.value % "test" // for ToolBox
+libraryDependencies += "org.scala-lang" % "scala-compiler" % scalaVersion.value //% "test" // for ToolBox
 libraryDependencies += "junit" % "junit" % "4.12" % "test"
 libraryDependencies += "com.novocode" % "junit-interface" % "0.11" % "test"
 

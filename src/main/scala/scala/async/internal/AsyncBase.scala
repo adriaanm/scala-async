@@ -68,7 +68,9 @@ abstract class AsyncBase {
       def typecheck(tree: Tree): Tree = ctx.typecheck(tree)
       def abort(pos: Position, msg: String): Nothing = ctx.abort(pos, msg)
       def error(pos: Position, msg: String): Unit = ctx.error(pos, msg)
-      val typingTransformers: (Aliases with Internals {val universe: u.type})#ContextInternalApi = ctx.internal
+      val typingTransformers = new TypingTransformers {
+        val callsiteTyper: global.analyzer.Typer = ctx.asInstanceOf[scala.reflect.macros.contexts.Context].callsiteTyper.asInstanceOf[global.analyzer.Typer]
+      }
     }
 
     val enclosingOwner = ctx.internal.enclosingOwner
