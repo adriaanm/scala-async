@@ -413,8 +413,10 @@ class LateExpansion {
       settings.outdir.value = out.getAbsolutePath
       settings.embeddedDefaults(getClass.getClassLoader)
       settings.printtypes.value = true
-      settings.debug.value = true
-      settings.Ytyperdebug.value = true
+//      settings.debug.value = true
+//      settings.Ytyperdebug.value = true
+//      settings.uniqid.value = true
+      settings.Xprint.value = List("postpatmat", "flatten")
       val isInSBT = !settings.classpath.isSetByUser
       if (isInSBT) settings.usejavacp.value = true
       val global = new Global(settings, reporter) {
