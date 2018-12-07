@@ -31,7 +31,7 @@ trait FutureSystem {
   abstract class Ops[Universe <: SymbolTable](val u: Universe) {
     import u._
 
-    def isPastErasure = false
+    def isPastErasure = true
 
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
     def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))

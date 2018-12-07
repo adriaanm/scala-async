@@ -38,8 +38,8 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
-  val isPastUncurry = false // isPast(currentRun.uncurryPhase)
-  val isPastErasure = false
+  val isPastUncurry = true // isPast(currentRun.uncurryPhase)
+  val isPastErasure = true
 
   def atAsyncPos(t: Tree): Tree = atPos(asyncPos)(t)
 
