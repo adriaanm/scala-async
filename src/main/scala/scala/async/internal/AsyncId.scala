@@ -15,7 +15,7 @@ object AsyncId extends AsyncBase {
 
   def async[T](body: => T) = macro asyncIdImpl[T]
 
-  def asyncIdImpl[T: c.WeakTypeTag](c: Context)(body: c.Expr[T]): c.Expr[T] = asyncImpl[T](c)(body)(c.literalUnit)
+  def asyncIdImpl[T: c.WeakTypeTag](c: Context)(body: c.Expr[T]): c.Expr[futureSystem.Fut[T]] = asyncImpl[T](c)(body)(c.literalUnit)
 }
 
 object AsyncTestLV extends AsyncBase {
@@ -24,7 +24,7 @@ object AsyncTestLV extends AsyncBase {
 
   def async[T](body: T) = macro asyncIdImpl[T]
 
-  def asyncIdImpl[T: c.WeakTypeTag](c: Context)(body: c.Expr[T]): c.Expr[T] = asyncImpl[T](c)(body)(c.literalUnit)
+  def asyncIdImpl[T: c.WeakTypeTag](c: Context)(body: c.Expr[T]): c.Expr[futureSystem.Fut[T]] = asyncImpl[T](c)(body)(c.literalUnit)
 
   var log: List[(String, Any)] = Nil
   def assertNulledOut(a: Any): Unit = assert(log.exists(_._2 == a), AsyncTestLV.log)
@@ -70,7 +70,7 @@ object IdentityFutureSystem extends FutureSystem {
 
     def future[A: WeakTypeTag](t: Expr[A])(execContext: Expr[ExecContext]) = t
 
-    def onComplete[A, U](future: Expr[Fut[A]], fun: Expr[Tryy[A] => U],
+    def onComplete[A, B](future: Expr[Fut[A]], fun: Expr[Tryy[A] => B],
                          execContext: Expr[ExecContext]): Expr[Unit] = reify {
       fun.splice.apply(util.Success(future.splice))
       literalUnitExpr.splice

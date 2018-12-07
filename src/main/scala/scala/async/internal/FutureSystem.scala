@@ -26,9 +26,9 @@ trait FutureSystem {
   /** Any data type isomorphic to scala.util.Try. */
   type Tryy[T]
 
-  // We could do with just U <: reflect.api.Universe if it wasn't Expr and WeakTypeTag
+  // We could do with just Universe <: reflect.api.Universe if it wasn't Expr and WeakTypeTag
   // (the api effectively doesn't let you call these factories since there's no way to get at the Tree- and TypeCreators)
-  abstract class Ops[U <: SymbolTable](val u: U) {
+  abstract class Ops[Universe <: SymbolTable](val u: Universe) {
     import u._
 
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
@@ -51,7 +51,7 @@ trait FutureSystem {
     def future[A: WeakTypeTag](a: Expr[A])(execContext: Expr[ExecContext]): Expr[Fut[A]]
 
     /** Register an call back to run on completion of the given future */
-    def onComplete[A, U](future: Expr[Fut[A]], fun: Expr[Tryy[A] => U],
+    def onComplete[A, B](future: Expr[Fut[A]], fun: Expr[Tryy[A] => B],
                          execContext: Expr[ExecContext]): Expr[Unit]
 
     def continueCompletedFutureOnSameThread = false
@@ -97,7 +97,7 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   type Tryy[A] = scala.util.Try[A]
 
   def mkOps(u: SymbolTable): Ops[u.type] = new ScalaConcurrentOps[u.type](u)
-  class ScalaConcurrentOps[U <: SymbolTable](u0: U) extends Ops[U](u0) {
+  class ScalaConcurrentOps[Universe <: SymbolTable](u0: Universe) extends Ops[Universe](u0) {
     import u._
 
     def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
@@ -116,7 +116,7 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
       Future(a.splice)(execContext.splice)
     }
 
-    def onComplete[A, U](future: Expr[Fut[A]], fun: Expr[scala.util.Try[A] => U],
+    def onComplete[A, B](future: Expr[Fut[A]], fun: Expr[scala.util.Try[A] => B],
                          execContext: Expr[ExecContext]): Expr[Unit] = reify {
       future.splice.onComplete(fun.splice)(execContext.splice)
     }

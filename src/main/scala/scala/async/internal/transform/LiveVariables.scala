@@ -28,7 +28,7 @@ trait LiveVariables extends ExprBuilder {
     // the result map indicates in which states a given field should be nulled out
     val liveVarsMap: mutable.LinkedHashMap[Tree, StateSet] = liveVars(asyncStates, liftables)
 
-    var assignsOf = mutable.LinkedHashMap[Int, List[Tree]]()
+    val assignsOf = mutable.LinkedHashMap[Int, List[Tree]]()
 
     for ((fld, where) <- liveVarsMap) {
       where.foreach { new IntConsumer { def accept(state: Int): Unit = {
@@ -276,7 +276,7 @@ trait LiveVariables extends ExprBuilder {
 
     val nullOutAt: mutable.LinkedHashMap[Tree, StateSet] =
       for ((fld, lastStates) <- lastUsages) yield {
-        var result = new StateSet
+        val result = new StateSet
         lastStates.foreach(new IntConsumer { def accept(s: Int): Unit = {
           if (s != finalState.state) {
             val lastAsyncState = asyncStates.find(_.state == s).get

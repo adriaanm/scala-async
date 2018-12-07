@@ -13,7 +13,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
   def asyncTransform[T](body0: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: Type): Tree = {
     val body = body0 match {
-      case Function(Nil, body) => body // after uncurry, need to be wrapped in a fun0
+      case Function(Nil, body) if isPastUncurry => body // after uncurry, need to be wrapped in a fun0
       case body => body
     }
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce

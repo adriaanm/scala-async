@@ -5,10 +5,10 @@ package scala.async.internal.transform
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.reflect.internal.{SymbolTable, Flags}
 import scala.reflect.macros.{Aliases, Internals}
-
+import scala.reflect.internal.{Flags, SymbolTable}
 import scala.async.internal.{AsyncBase, AsyncNames}
+import scala.language.existentials
 
 private[async] trait AsyncContext {
   val asyncBase: AsyncBase
@@ -16,6 +16,7 @@ private[async] trait AsyncContext {
   val u: SymbolTable
   import u._
 
+  // TODO move asyncPos to asyncTransform method
   val asyncPos: Position
   val Async_async: Symbol
   val Async_await: Symbol
@@ -38,25 +39,34 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
+  val isPastUncurry = false // isPast(currentRun.uncurryPhase)
+  val isPastErasure = false
+
   def atAsyncPos(t: Tree): Tree = atPos(asyncPos)(t)
 
   def literalNull = Literal(Constant(null))
 
   def typeEqualsNothing(tp: Type) = tp =:= definitions.NothingTpe
 
-  def typeEqualsUnit(tp: Type) = tp =:= definitions.UnitTpe
-  def castToUnit(t: Tree) = gen.mkCast(t, definitions.UnitTpe)
+  def typeEqualsUnit(tp: Type) = tp =:= definitions.UnitTpe || (isPastErasure && tp =:= definitions.BoxedUnitTpe)
+  def castToUnit(t: Tree) =
+    gen.mkCast(t, definitions.UnitTpe)
 
-  def assignUnitType(t: Tree): t.type = t.setType(definitions.UnitTpe)
-  def setUnitMethodInfo(sym: Symbol): sym.type = sym.setInfo(MethodType(Nil, definitions.UnitTpe))
+  def assignUnitType(t: Tree): t.type =
+    t.setType(if (isPastErasure) definitions.BoxedUnitTpe else definitions.UnitTpe)
 
-  def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass
+  def setUnitMethodInfo(sym: Symbol): sym.type = sym.setInfo(MethodType(Nil, if (isPastErasure) definitions.BoxedUnitTpe else definitions.UnitTpe))
+
+  def isUnitType(tp: Type) = tp.typeSymbol == definitions.UnitClass || (isPastErasure && tp =:= definitions.BoxedUnitTpe)
   def isNothingClass(sym: Symbol) = sym == definitions.NothingClass
 
-  def literalUnit = Literal(Constant(())) // a def to avoid sharing trees
+  def literalUnit =
+    if (isPastErasure) gen.mkAttributedRef(definitions.BoxedUnit_UNIT)
+    else Literal(Constant(())) // a def to avoid sharing trees
 
   def isLiteralUnit(t: Tree) = t match {
     case Literal(Constant(())) => true
+    case t if t.symbol == definitions.BoxedUnit_UNIT => true // important to find match labels (which are potential states)
     case _ => false
   }
 
@@ -76,33 +86,40 @@ trait PhasedTransform extends AsyncContext {
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
 
+  def transformParentTypes(tps: List[Type]) = {
+    val tpsErased = tps.map(transformType)
+    assert(tpsErased.head.typeSymbol.isClass)
+    tpsErased
+  }
+
   def transformType(tp: Type) = {
-    val res = uncurry.uncurry(tp)
+    val res = if (isPastErasure) transformedType(tp) else tp
     println(s"transform type $tp TO $res")
     res
   }
 
-  def mkAsInstanceOf(qual: Tree, tp: Type) =
-    TypeApply(Select(qual, nme.asInstanceOf_), List(TypeTree(tp)))
+  def mkAsInstanceOf(qual: Tree, tp: Type) = gen.mkCast(qual, tp)
 
   private def tpeOf(t: Tree): Type = t match {
-    case _ if t.tpe != null                      => t.tpe
-    case Try(body, Nil, _)                       => tpeOf(body)
-    case Block(_, expr)                          => tpeOf(expr)
-    case Literal(Constant(value)) if value == () => definitions.UnitTpe
-    case Return(_)                               => definitions.NothingTpe
-    case _                                       => NoType
+    case _ if t.tpe != null    => t.tpe
+    case Try(body, Nil, _)     => tpeOf(body)
+    case Block(_, expr)        => tpeOf(expr)
+    case Literal(Constant(())) => definitions.UnitTpe
+    case Return(_)             => definitions.NothingTpe
+    case _                     => NoType
   }
 
   def adaptToUnit(rhs: List[Tree]): Block =
     rhs match {
-      case (rhs: Block) :: Nil if tpeOf(rhs) <:< definitions.UnitTpe  =>
+      case (rhs: Block) :: Nil if { val tp = tpeOf(rhs); tp <:< definitions.UnitTpe || tp <:< definitions.BoxedUnitTpe } =>
         rhs
-      case init :+ last if tpeOf(last) <:< definitions.UnitTpe        =>
+      case init :+ last if { val tp = tpeOf(last); tp <:< definitions.UnitTpe || tp <:< definitions.BoxedUnitTpe }        =>
         Block(init, last)
       case init :+ (last@Literal(Constant(())))                       =>
         Block(init, last)
       case init :+ (last@Block(_, Return(_) | Literal(Constant(())))) =>
+        Block(init, last)
+      case init :+ (last@Block(_, expr)) if expr.symbol == definitions.BoxedUnit_UNIT =>
         Block(init, last)
       case init :+ Block(stats, expr)                                 =>
         Block(init, Block(stats :+ expr, literalUnit))
@@ -147,8 +164,7 @@ trait PhasedTransform extends AsyncContext {
     }
   }
 
-  // TODO: when we run after erasure the annotation is not needed
-  final def uncheckedBounds(tp: Type): Type = u.uncheckedBounds(tp)
+  final def uncheckedBounds(tp: Type): Type = if (isPastErasure) tp else u.uncheckedBounds(tp)
 
   def uncheckedBoundsIfNeeded(t: Type): Type = {
     var quantified: List[Symbol] = Nil
@@ -191,7 +207,7 @@ private[async] trait TransformUtils extends PhasedTransform {
 
   private lazy val Boolean_ShortCircuits: Set[Symbol] = {
     import definitions.BooleanClass
-    def BooleanTermMember(name: String) = BooleanClass.typeSignature.member(newTermName(name).encodedName)
+    def BooleanTermMember(name: String) = BooleanClass.typeSignature.member(TermName(name).encodedName)
     val Boolean_&& = BooleanTermMember("&&")
     val Boolean_|| = BooleanTermMember("||")
     Set(Boolean_&&, Boolean_||)

@@ -9,12 +9,28 @@ import java.util.function.IntUnaryOperator
 import scala.async.internal.FutureSystem
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
+import scala.language.existentials
 
 trait ExprBuilder extends TransformUtils {
   import u._
 
-  val futureSystem: FutureSystem = asyncBase.futureSystem
-  val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
+  lazy val futureSystem: FutureSystem = asyncBase.futureSystem
+  lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
+
+  // a lightweight erasure transform to handle trees coming from the future system customisation hooks
+  def erase(t: Tree): Tree = {
+    object xform extends Transformer {
+      override def transform(tree: Tree): Tree = tree match {
+        case TypeApply(fun, _) => transform(fun)
+        case AppliedTypeTree(fun, _) => transform(fun)
+//        case TypeTree() => tree setType erasure.scalaErasure(tree.tpe)
+        case _ => super.transform(tree)
+      }
+    }
+
+    if (isPastErasure) xform.transform(t)
+    else t
+  }
 
   def nullOut(fieldSym: Symbol): Tree =
     asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
@@ -158,7 +174,9 @@ trait ExprBuilder extends TransformUtils {
     /** The state of the target of a LabelDef application (while loop jump) */
     private var nextJumpState: Option[Int] = None
     private var nextJumpSymbol: Symbol = NoSymbol
-    def effectiveNextState(nextState: Int) = nextJumpState.orElse(if (nextJumpSymbol == NoSymbol) None else Some(stateIdForLabel(nextJumpSymbol))).getOrElse(nextState)
+    def effectiveNextState(nextState: Int) =
+      nextJumpState.orElse(if (nextJumpSymbol == NoSymbol) None
+                           else Some(stateIdForLabel(nextJumpSymbol))).getOrElse(nextState)
 
     def +=(stat: Tree): this.type = {
       // Allow `()` (occurs in do/while)
@@ -298,9 +316,8 @@ trait ExprBuilder extends TransformUtils {
         val elseStartState = nextState()
         val afterIfState = afterState.getOrElse(nextState())
 
-        asyncStates +=
-          // the two Int arguments are the start state of the then branch and the else branch, respectively
-          stateBuilder.resultWithIf(cond, thenStartState, elseStartState)
+        // the two Int arguments are the start state of the then branch and the else branch, respectively
+        asyncStates += stateBuilder.resultWithIf(cond, thenStartState, elseStartState)
 
         List((thenp, thenStartState), (elsep, elseStartState)) foreach {
           case (branchTree, state) =>
@@ -320,8 +337,7 @@ trait ExprBuilder extends TransformUtils {
         })
         val afterMatchState = afterState.getOrElse(nextState())
 
-        asyncStates +=
-          stateBuilder.resultWithMatch(scrutinee, cases, caseStates, symLookup)
+        asyncStates += stateBuilder.resultWithMatch(scrutinee, cases, caseStates, symLookup)
 
         for ((cas, num) <- cases.zipWithIndex) {
           val (stats, expr) = statsAndExpr(cas.body)
@@ -364,8 +380,9 @@ trait ExprBuilder extends TransformUtils {
   }
 
   case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
-    def stateMachineMember(name: TermName): Symbol =
+    def stateMachineMember(name: TermName): Symbol = {
       stateMachineClass.info.member(name)
+    }
     def memberRef(name: TermName): Tree =
       gen.mkAttributedRef(stateMachineMember(name))
   }
@@ -408,7 +425,7 @@ trait ExprBuilder extends TransformUtils {
         val dotBuilder = new StringBuilder()
         dotBuilder.append("digraph {\n")
         def stateLabel(s: Int) = {
-          if (s == 0) "INITIAL" else if (s == Int.MaxValue) "TERMINAL" else switchIds.getOrElse(s, s).toString
+          if (s == 0) "INITIAL" else if (s == Int.MaxValue) "TERMINAL" else switchIds.getOrElse[Integer](s, s).toString
         }
         val length = states.size
         for ((state, i) <- asyncStates.zipWithIndex) {
@@ -461,7 +478,7 @@ trait ExprBuilder extends TransformUtils {
         val all = blockBuilder.asyncStates.toList
         val (initial :: rest) = all
         val map = all.iterator.map(x => (x.state, x)).toMap
-        var seen = mutable.HashSet[Int]()
+        val seen = mutable.HashSet[Int]()
         def loop(state: AsyncState): Unit = {
           seen.add(state.state)
           for (i <- state.nextStates) {
@@ -528,7 +545,6 @@ trait ExprBuilder extends TransformUtils {
        *     }
        */
       private def resumeFunTree[T: WeakTypeTag]: Tree = {
-        val stateMemberSymbol = symLookup.stateMachineMember(name.state)
         val stateMemberRef = symLookup.memberRef(name.state)
         val body =
           Match(stateMemberRef,
@@ -544,14 +560,14 @@ trait ExprBuilder extends TransformUtils {
             CaseDef(
             Bind(name.t, Typed(Ident(nme.WILDCARD), Ident(ThrowableClass))),
             EmptyTree, {
-              val then = {
+              val branchTrue = {
                 val t = Expr[Throwable](Ident(name.t))
-                val complete = futureSystemOps.completeProm[T](
-                    Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), futureSystemOps.tryyFailure[T](t)).tree
+                val complete = erase(futureSystemOps.completeProm[T](
+                    Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), futureSystemOps.tryyFailure[T](t)).tree)
                 Block(toList(complete), Return(literalUnit))
               }
-              If(Apply(Ident(NonFatalClass), List(Ident(name.t))), then, Throw(Ident(name.t)))
-              then
+              If(Apply(Ident(NonFatalClass), List(Ident(name.t))), branchTrue, Throw(Ident(name.t)))
+                branchTrue
             })), EmptyTree)
       }
 
@@ -579,7 +595,7 @@ trait ExprBuilder extends TransformUtils {
       }
 
       def forever(t: Tree): Tree = {
-        val labelName = name.fresh("while$")
+        val labelName = TermName(name.fresh("while$"))
         LabelDef(labelName, Nil, Block(toList(t), Apply(Ident(labelName), Nil)))
       }
 
@@ -596,7 +612,8 @@ trait ExprBuilder extends TransformUtils {
        *     }
        */
       def onCompleteHandler[T: WeakTypeTag]: Tree = {
-        val onCompletes = initStates.flatMap(_.mkOnCompleteHandler[T])
+        // TODO: this was unused -- don't understand what this does
+        // val onCompletes = initStates.flatMap(_.mkOnCompleteHandler[T])
         forever {
           adaptToUnit(toList(resumeFunTree))
         }

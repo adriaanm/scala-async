@@ -14,8 +14,8 @@ import scala.collection.JavaConverters.{asScalaIteratorConverter, iterableAsScal
 
 // Set for StateIds, which are either small positive integers or -symbolID.
 final class StateSet {
-  private var bitSet = new java.util.BitSet()
-  private var caseSet = new util.HashSet[Integer]()
+  private val bitSet = new java.util.BitSet()
+  private val caseSet = new util.HashSet[Integer]()
   def +=(stateId: Int): Unit = if (stateId > 0) bitSet.set(stateId) else caseSet.add(stateId)
   def contains(stateId: Int): Boolean = if (stateId > 0 && stateId < 1024) bitSet.get(stateId) else caseSet.contains(stateId)
   def iterator: Iterator[Integer] = {

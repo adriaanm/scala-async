@@ -309,26 +309,26 @@ private[async] trait AnfTransform extends TransformUtils {
         val matchResults = collection.mutable.Buffer[Tree]()
         def modifyLabelDef(ld: LabelDef): (Tree, Tree) = {
           val param = ld.params.head
-          val ld2 =
-            if (isUnitType(ld.params.head.tpe)) {
-              // Unit typed match: eliminate the label def parameter, but don't create a matchres temp variable to
-              // store the result for cleaner generated code.
-              caseDefToMatchResult(ld.symbol) = NoSymbol
-              val rhs2 = substituteTrees(ld.rhs, param.symbol :: Nil, typed(literalUnit) :: Nil)
-              val tree: Tree = literalUnit
-              (treeCopy.LabelDef(ld, ld.name, Nil, typed(tree)), rhs2)
-            } else {
-              // Otherwise, create the matchres var. We'll callers of the label def below.
-              // Remember: we're iterating through the statement sequence in reverse, so we'll get
-              // to the LabelDef and mutate `matchResults` before we'll get to its callers.
-              val matchResult = linearize.defineVar(name.matchRes(), param.tpe, ld.pos)
-              matchResults += matchResult
-              caseDefToMatchResult(ld.symbol) = matchResult.symbol
-              val rhs2 = ld.rhs.substituteSymbols(param.symbol :: Nil, matchResult.symbol :: Nil)
-              (treeCopy.LabelDef(ld, ld.name, Nil, typed(literalUnit)), rhs2)
-            }
-          setUnitMethodInfo(ld.symbol)
-          ld2
+
+          def unitLabelDef = {
+            setUnitMethodInfo(ld.symbol)
+            assignUnitType(treeCopy.LabelDef(ld, ld.name, Nil, typed(literalUnit)))
+          }
+
+          if (isUnitType(ld.params.head.tpe)) {
+            // Unit typed match: eliminate the label def parameter, but don't create a matchres temp variable to
+            // store the result for cleaner generated code.
+            caseDefToMatchResult(ld.symbol) = NoSymbol
+            (unitLabelDef, substituteTrees(ld.rhs, param.symbol :: Nil, typed(literalUnit) :: Nil))
+          } else {
+            // Otherwise, create the matchres var. We'll callers of the label def below.
+            // Remember: we're iterating through the statement sequence in reverse, so we'll get
+            // to the LabelDef and mutate `matchResults` before we'll get to its callers.
+            val matchResult = linearize.defineVar(name.matchRes(), param.tpe, ld.pos)
+            matchResults += matchResult
+            caseDefToMatchResult(ld.symbol) = matchResult.symbol
+            (unitLabelDef, ld.rhs.substituteSymbols(param.symbol :: Nil, matchResult.symbol :: Nil))
+          }
         }
         val statsExpr0 = statsExpr.reverse.flatMap {
           case ld @ LabelDef(_, param :: Nil, _) =>

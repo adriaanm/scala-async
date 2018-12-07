@@ -28,7 +28,7 @@ trait Lifter extends ExprBuilder {
       def record(defs: List[Tree]): Unit = {
         // Keep note of local companions so we rename them consistently
         // when lifting.
-        val comps = for {
+        for {
           cd@ClassDef(_, _, _, _) <- defs
           md@ModuleDef(_, _, _) <- defs
           if (cd.name.toTermName == md.name)

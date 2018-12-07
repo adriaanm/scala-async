@@ -7,8 +7,7 @@ package async
 package internal
 
 import scala.concurrent.Future
-import scala.language.experimental.macros
-import scala.reflect.macros.Context
+import scala.reflect.macros.whitebox.Context
 
 object ScalaConcurrentAsync extends AsyncBase {
   type FS = ScalaConcurrentFutureSystem.type
