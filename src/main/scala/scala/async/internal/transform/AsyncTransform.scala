@@ -114,7 +114,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
         stateMachineSpliced,
         ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil)),
         spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
-        promiseToFuture(selectStateMachine(name.result))(resultTypeTag)
+        promiseToFuture(applyNilAfterUncurry(selectStateMachine(name.result)))(resultTypeTag)
       )
     }
 

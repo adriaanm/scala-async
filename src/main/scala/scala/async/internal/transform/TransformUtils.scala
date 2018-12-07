@@ -71,7 +71,7 @@ trait PhasedTransform extends AsyncContext {
 
   def function0ToUnit = typeOf[() => Unit]
   def apply0DefDef: DefDef =
-    DefDef(NoMods, name.apply, Nil, Nil, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
+    DefDef(NoMods, name.apply, Nil, if (isPastUncurry) List(Nil) else Nil, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
 
   def function1ToUnit(argTp: Type, useClass: Boolean) = {
     val fun =
@@ -84,6 +84,8 @@ trait PhasedTransform extends AsyncContext {
     val applyVParamss = List(List(ValDef(Modifiers(Flags.PARAM), name.tr, TypeTree(argTp), EmptyTree)))
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
+
+  def applyNilAfterUncurry(t: Tree) = if (isPastUncurry) Apply(t, Nil) else t
 
   def transformParentTypes(tps: List[Type]) = {
     val tpsErased = tps.map(transformType)
