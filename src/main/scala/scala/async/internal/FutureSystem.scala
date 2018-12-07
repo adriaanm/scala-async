@@ -31,13 +31,15 @@ trait FutureSystem {
   abstract class Ops[Universe <: SymbolTable](val u: Universe) {
     import u._
 
+    def isPastErasure = false
+
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
     def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
 
     def literalUnitExpr = Expr[Unit](Literal(Constant(())))
 
-    def promType[A: WeakTypeTag]: Type
-    def tryType[A: WeakTypeTag]: Type
+    def promType(tp: Type): Type
+    def tryType(tp: Type): Type
 //    def execContextType: Type
     def stateMachineClassParents: List[Type] = Nil
 
@@ -100,8 +102,8 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   class ScalaConcurrentOps[Universe <: SymbolTable](u0: Universe) extends Ops[Universe](u0) {
     import u._
 
-    def promType[A: WeakTypeTag]: Type = weakTypeOf[Promise[A]]
-    def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
+    def promType(tp: Type): Type = appliedType(weakTypeOf[Promise[_]], tp)
+    def tryType(tp: Type): Type = appliedType(weakTypeOf[scala.util.Try[_]], tp)
 //    def execContextType: Type = weakTypeOf[ExecutionContext]
 
     def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {

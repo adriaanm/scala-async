@@ -414,6 +414,7 @@ class LateExpansion {
       settings.embeddedDefaults(getClass.getClassLoader)
       settings.printtypes.value = true
       settings.debug.value = true
+      settings.Ytyperdebug.value = true
       val isInSBT = !settings.classpath.isSetByUser
       if (isInSBT) settings.usejavacp.value = true
       val global = new Global(settings, reporter) {

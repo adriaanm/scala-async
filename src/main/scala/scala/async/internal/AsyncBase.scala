@@ -7,7 +7,8 @@ package scala.async.internal
 import scala.async.internal.transform.{AsyncTransform, AsyncUtils}
 import scala.reflect.api.Universe
 import scala.reflect.internal.annotations.compileTimeOnly
-import scala.reflect.macros.{Aliases, Context, Internals}
+import scala.reflect.macros.Aliases
+import scala.reflect.macros.whitebox.Context
 
 /**
  * A base class for the `async` macro. Subclasses must provide:
@@ -75,7 +76,7 @@ abstract class AsyncBase {
 
     val enclosingOwner = ctx.internal.enclosingOwner
     val code =
-      try asyncMacro.asyncTransform[T](body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T].tpe)
+      try asyncMacro.asyncTransform(body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T].tpe)
       catch { case te: ctx.universe.TypeError => ctx.info(enclosingOwner.pos, te.getStackTrace.mkString("\n"), true); ??? }
 
     AsyncUtils.vprintln(s"async state machine transform expands to:\n $code")

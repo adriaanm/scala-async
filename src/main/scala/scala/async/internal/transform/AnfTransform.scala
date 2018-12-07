@@ -346,6 +346,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
               tree match {
                 case Apply(fun, arg :: Nil) if isLabel(fun.symbol) && caseDefToMatchResult.contains(fun.symbol) =>
+                  println(s"convering labeldef apply $fun ${fun.symbol} ${fun.tpe} ${fun.symbol.id}")
                   val temp = caseDefToMatchResult(fun.symbol)
                   if (temp == NoSymbol)
                     typedPos(tree.pos)(Block(transform(arg) :: Nil, treeCopy.Apply(tree, fun, Nil)))

@@ -11,16 +11,13 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform[T](body0: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: Type): Tree = {
-    val body = body0 match {
-      case Function(Nil, body) if isPastUncurry => body // after uncurry, need to be wrapped in a fun0
-      case body => body
-    }
+  def asyncTransform(body: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: Type): Tree = {
     // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
     // warnings about non-conformant LUBs. See SI-7694
     // This implicit propagates the annotated type in the type tag.
-    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
+//    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
 
+    println(s"body = $body")
     markContainsAwait(body) // TODO: is this needed?
     reportUnsupportedAwaits(body)
 
@@ -34,7 +31,16 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     cleanupContainsAwaitAttachments(anfTree)
     markContainsAwait(anfTree)
 
-    val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(transformType(futureSystemOps.tryType[Any]))
+    println(anfTree)
+
+//    anfTree
+
+    // TODO: unchecked bounds if !isPastErasure
+    val resultTypeTag = WeakTypeTag(uncheckedBounds(transformType(resultType)))
+//    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
+
+    val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(tryAny)
+
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
@@ -42,10 +48,12 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     val stateMachine: ClassDef = {
       val body: List[Tree] = {
         val stateVar = ValDef(Modifiers(Flags.MUTABLE | Flags.PRIVATE | Flags.LOCAL), name.state, TypeTree(definitions.IntTpe), Literal(Constant(StateAssigner.Initial)))
-        val resultAndAccessors = mkMutableField(transformType(futureSystemOps.promType[T](uncheckedBoundsResultTag)), name.result, futureSystemOps.createProm[T](uncheckedBoundsResultTag).tree)
-        val execContextValDef = ValDef(NoMods, name.execContext, TypeTree(), execContext)
+        val resultAndAccessors =
+          mkMutableField(transformType(futureSystemOps.promType(uncheckedBounds(resultType))), name.result, erase(futureSystemOps.createProm[Nothing](resultTypeTag).tree))
+        val execContextValDef =
+          mkField(execContext.tpe, name.execContext, execContext)
 
-        List(emptyConstructor, stateVar) ++ resultAndAccessors ++ List(execContextValDef) ++ List(applyDefDefDummyBody, apply0DefDef)
+        List(emptyConstructor, stateVar) ++ resultAndAccessors ++ execContextValDef ++ List(applyDefDefDummyBody, apply0DefDef)
       }
 
       val customParents = futureSystemOps.stateMachineClassParents map transformType
@@ -55,10 +63,13 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
       // We extend () => Unit so we can pass this class as the by-name argument to `Future.apply`.
       // See SI-1247 for the the optimization that avoids creation.
-      val funParents = List(function1ToUnit(transformType(futureSystemOps.tryType[Any]), useClass), function0ToUnit)
+      val funParents = List(function1ToUnit(tryAny, useClass), function0ToUnit)
 
       // TODO: after erasure we have to change the order of these parents etc
-      val templ = Template((customParents ::: funParents).map(TypeTree(_)), noSelfType, body)
+      val templ = Template(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, body)
+
+      println(s"ASYNC")
+      println(showRaw(body))
 
       // TODO: add a dependency on scala-compiler and get rid of this roundabout type checking hack?
       // or can we skip the type checking entirely and just create a symbol?
@@ -95,7 +106,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
     def startStateMachine: Tree = {
       val stateMachineSpliced: Tree =
-        spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler[T]), enclosingOwner)
+        spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler(resultTypeTag)), enclosingOwner)
 
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
 
@@ -103,7 +114,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
         stateMachineSpliced,
         ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil)),
         spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
-        promiseToFuture[T](selectStateMachine(name.result))
+        promiseToFuture(selectStateMachine(name.result))(resultTypeTag)
       )
     }
 
@@ -112,6 +123,14 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       if (isSimple) spawn(body, execContext) // generate lean code for the simple case of `async { 1 + 1 }`
       else startStateMachine
 
+    object check extends Traverser {
+      override def traverse(t: Tree) {
+        if (t.hasSymbolField && t.symbol.info.isInstanceOf[NullaryMethodType]) println("UHOH "+ t)
+        super.traverse(t)
+      }
+    }
+
+    check.traverse(result)
     if(AsyncUtils.verbose) {
       logDiagnostics(anfTree, asyncBlock, asyncBlock.asyncStates.map(_.toString))
     }
@@ -194,6 +213,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     def fixup(dd: DefDef, body: Tree, api: TypingTransformApi): Tree = {
       val spliceeAnfFixedOwnerSyms = body
       val newRhs = typingTransform(spliceeAnfFixedOwnerSyms, dd.symbol)(useFields)
+      println(newRhs)
       val newRhsTyped = api.atOwner(dd, dd.symbol)(api.typecheck(newRhs))
       treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, newRhsTyped)
     }

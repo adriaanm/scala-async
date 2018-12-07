@@ -5,9 +5,9 @@
 package scala.async.internal
 
 import scala.language.experimental.macros
-import scala.reflect.api.Universe
+import scala.reflect.api
 import scala.reflect.internal.SymbolTable
-import scala.reflect.macros.Context
+import scala.reflect.macros.whitebox.Context
 
 object AsyncId extends AsyncBase {
   lazy val futureSystem = IdentityFutureSystem
@@ -34,7 +34,7 @@ object AsyncTestLV extends AsyncBase {
   def apply(name: String, v: Any): Unit =
     log ::= (name -> v)
 
-  protected[async] override def nullOut(u: Universe)(name: u.Expr[String], v: u.Expr[Any]): u.Expr[Unit] =
+  protected[async] override def nullOut(u: api.Universe)(name: u.Expr[String], v: u.Expr[Any]): u.Expr[Unit] =
     u.reify { scala.async.internal.AsyncTestLV(name.splice, v.splice) }
 }
 
@@ -53,12 +53,21 @@ object IdentityFutureSystem extends FutureSystem {
   type Tryy[A] = scala.util.Try[A]
 
   def mkOps(u: SymbolTable): Ops[u.type] = new IdentityOps[u.type](u)
-  class IdentityOps[U <: SymbolTable](u0: U) extends Ops[U](u0) {
+  class IdentityOps[Universe <: SymbolTable](u0: Universe) extends Ops[Universe](u0) {
     import u._
 
-    def promType[A: WeakTypeTag]: Type = weakTypeOf[Box[A]]
-    def tryType[A: WeakTypeTag]: Type = weakTypeOf[scala.util.Try[A]]
-//    def execContextType: Type = weakTypeOf[Unit]
+    def promType(tp: Type): Type = {
+      val tycon = weakTypeOf[Box[_]]
+
+      if (isPastErasure) tycon
+      else appliedType(tycon, tp)
+    }
+    def tryType(tp: Type): Type = {
+      val tycon = weakTypeOf[scala.util.Try[_]]
+
+      if (isPastErasure) tycon
+      else appliedType(tycon, tp)
+    }
 
     def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {
       new Prom[A]()

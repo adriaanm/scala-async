@@ -36,14 +36,15 @@ trait ExprBuilder extends TransformUtils {
     asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
 
   def spawn(tree: Tree, execContext: Tree): Tree =
-    futureSystemOps.future(Expr[Unit](tree))(Expr[futureSystem.ExecContext](execContext)).tree
+    erase(futureSystemOps.future(Expr[Unit](tree))(Expr[futureSystem.ExecContext](execContext)).tree)
 
   def promiseToFuture[T: WeakTypeTag](prom: Tree): Tree =
-    futureSystemOps.promiseToFuture(Expr[futureSystem.Prom[T]](prom)).tree
+    erase(futureSystemOps.promiseToFuture(Expr[futureSystem.Prom[T]](prom)).tree)
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
   def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
 
+  lazy val tryAny= transformType(futureSystemOps.tryType(definitions.AnyTpe))
 
   private val stateAssigner  = new StateAssigner
   private val labelDefStates = collection.mutable.Map[Symbol, Int]()
@@ -111,12 +112,12 @@ trait ExprBuilder extends TransformUtils {
 
     override def mkHandlerCaseForState[T: WeakTypeTag]: CaseDef = {
       val fun = This(tpnme.EMPTY)
-      val callOnComplete = futureSystemOps.onComplete[Any, Unit](Expr[futureSystem.Fut[Any]](awaitable.expr),
-        Expr[futureSystem.Tryy[Any] => Unit](fun), Expr[futureSystem.ExecContext](Ident(name.execContext))).tree
+      val callOnComplete = erase(futureSystemOps.onComplete[Any, Unit](Expr[futureSystem.Fut[Any]](awaitable.expr),
+        Expr[futureSystem.Tryy[Any] => Unit](fun), Expr[futureSystem.ExecContext](Ident(name.execContext))).tree)
       val tryGetOrCallOnComplete: List[Tree] =
         if (futureSystemOps.continueCompletedFutureOnSameThread) {
           val tempName = name.completed
-          val initTemp = ValDef(NoMods, tempName, TypeTree(transformType(futureSystemOps.tryType[Any])), futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
+          val initTemp = ValDef(NoMods, tempName, TypeTree(tryAny), erase(futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree))
           val null_ne = Select(Literal(Constant(null)), TermName("ne"))
           val ifTree =
             If(Apply(null_ne, Ident(tempName) :: Nil),
@@ -130,7 +131,7 @@ trait ExprBuilder extends TransformUtils {
     }
 
     private def tryGetTree(tryReference: => Tree) = {
-      val tryyGet = futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree
+      val tryyGet = erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
       Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, transformType(awaitable.resultType)))
     }
 
@@ -146,9 +147,9 @@ trait ExprBuilder extends TransformUtils {
       val getAndUpdateState = Block(List(tryGetTree(tryReference)), mkStateTree(nextState, symLookup))
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
-          Block(toList(futureSystemOps.completeProm[T](
+          Block(toList(erase(futureSystemOps.completeProm[T](
             Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)),
-            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType[T])))).tree),
+            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType(implicitly[WeakTypeTag[T]].tpe))))).tree)), // TODO: this is pretty bonkers... implicitly[WeakTypeTag[T]].tpe == resultType
             Return(literalUnit)),
           getAndUpdateState
         )
@@ -512,7 +513,7 @@ trait ExprBuilder extends TransformUtils {
           val lastStateBody = Expr[T](lastState.body)
           val rhs = futureSystemOps.completeWithSuccess(
             Expr[futureSystem.Prom[T]](symLookup.memberRef(name.result)), lastStateBody)
-          mkHandlerCase(lastState.state, Block(rhs.tree, Return(literalUnit)))
+          mkHandlerCase(lastState.state, Block(erase(rhs.tree), Return(literalUnit)))
         }
         asyncStates match {
           case s :: Nil =>
