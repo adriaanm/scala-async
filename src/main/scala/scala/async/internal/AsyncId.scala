@@ -73,8 +73,10 @@ object IdentityFutureSystem extends FutureSystem {
       new Prom[A]()
     }
 
-    def promiseToFuture[A: WeakTypeTag](prom: Expr[Prom[A]]) = reify {
-      prom.splice.a
+    def promiseToFuture[A: WeakTypeTag](prom: Expr[Prom[A]]) = {
+      val expr = reify { prom.splice.a }
+      if (!isPastErasure) expr
+      else Expr[Fut[A]](Apply(expr.tree, Nil))
     }
 
     def future[A: WeakTypeTag](t: Expr[A])(execContext: Expr[ExecContext]) = t
@@ -94,9 +96,12 @@ object IdentityFutureSystem extends FutureSystem {
       tryy.splice.isFailure
     }
 
-    def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A] = reify {
-      tryy.splice.get
+    def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A] = {
+      val expr = reify { tryy.splice.get }
+      if (!isPastErasure) expr
+      else Expr[A](Apply(expr.tree, Nil))
     }
+
     def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[Tryy[A]] = reify {
       scala.util.Success[A](a.splice)
     }

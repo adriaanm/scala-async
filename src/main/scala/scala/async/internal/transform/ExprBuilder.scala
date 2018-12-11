@@ -38,9 +38,8 @@ trait ExprBuilder extends TransformUtils {
   def spawn(tree: Tree, execContext: Tree): Tree =
     erase(futureSystemOps.future(Expr[Unit](tree))(Expr[futureSystem.ExecContext](execContext)).tree)
 
-  // TODO: applyNilAfterUncurry should be done by erase when needed -- promiseToFuture only needs the () for AsyncId's case
-  def promiseToFuture[T: WeakTypeTag](prom: Tree): Tree =
-    erase(applyNilAfterUncurry(futureSystemOps.promiseToFuture(Expr[futureSystem.Prom[T]](prom)).tree))
+  def promiseToFuture(prom: Tree, resTp: Type): Tree =
+    erase(futureSystemOps.promiseToFuture(Expr[Nothing](prom))(WeakTypeTag(resTp)).tree)
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
   def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
@@ -101,6 +100,9 @@ trait ExprBuilder extends TransformUtils {
       s"AsyncStateWithoutAwait #$state, nextStates = ${nextStates.toList}"
   }
 
+  def selectResult(symLookup: SymLookup) = applyNilAfterUncurry(symLookup.memberRef(name.result))
+
+
   /** A sequence of statements that concludes with an `await` call. The `onComplete`
     * handler will unconditionally transition to `nextState`.
     */
@@ -132,8 +134,7 @@ trait ExprBuilder extends TransformUtils {
     }
 
     private def tryGetTree(tryReference: => Tree) = {
-      // the future system gives us an expr that does not apply the empty argument list to the get method
-      val tryyGet = applyNilAfterUncurry(erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree))
+      val tryyGet = erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
       Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, transformType(awaitable.resultType)))
     }
 
@@ -150,7 +151,7 @@ trait ExprBuilder extends TransformUtils {
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(erase(futureSystemOps.completeProm[T](
-            Expr[futureSystem.Prom[T]](applyNilAfterUncurry(symLookup.memberRef(name.result))),
+            Expr[futureSystem.Prom[T]](selectResult(symLookup)),
             Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType(implicitly[WeakTypeTag[T]].tpe))))).tree)), // TODO: this is pretty bonkers... implicitly[WeakTypeTag[T]].tpe == resultType
             Return(literalUnit)),
           getAndUpdateState
@@ -514,7 +515,7 @@ trait ExprBuilder extends TransformUtils {
           val lastState = asyncStates.last
           val lastStateBody = Expr[T](lastState.body)
           val rhs = futureSystemOps.completeWithSuccess(
-            Expr[futureSystem.Prom[T]](applyNilAfterUncurry(symLookup.memberRef(name.result))), lastStateBody)
+            Expr[futureSystem.Prom[T]](selectResult(symLookup)), lastStateBody)
           mkHandlerCase(lastState.state, Block(erase(rhs.tree), Return(literalUnit)))
         }
         asyncStates match {
@@ -566,7 +567,7 @@ trait ExprBuilder extends TransformUtils {
               val branchTrue = {
                 val t = Expr[Throwable](Ident(name.t))
                 val complete = erase(futureSystemOps.completeProm[T](
-                    Expr[futureSystem.Prom[T]](applyNilAfterUncurry(symLookup.memberRef(name.result))), futureSystemOps.tryyFailure[T](t)).tree)
+                    Expr[futureSystem.Prom[T]](selectResult(symLookup)), futureSystemOps.tryyFailure[T](t)).tree)
                 Block(toList(complete), Return(literalUnit))
               }
               If(Apply(Ident(NonFatalClass), List(Ident(name.t))), branchTrue, Throw(Ident(name.t)))
