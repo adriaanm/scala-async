@@ -43,6 +43,10 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(tryAny)
 
+    val enclosingClass = enclosingOwner.enclClass
+    val outerParams =
+      if (!isPastErasure) Nil // we'll get to explicitouter, which will take care of this
+      else ValDef(Modifiers(Flags.ARTIFACT | Flags.STABLE), newTermName("$outer"), TypeTree(enclosingClass.tpe_*), EmptyTree) :: Nil
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
@@ -68,7 +72,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val funParents = List(function1ToUnit(tryAny, useClass), function0ToUnit)
 
       // TODO: after erasure we have to change the order of these parents etc
-      val templ = Template(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, body)
+      val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(outerParams), body)
 
       println(s"ASYNC")
       println(showRaw(body))
@@ -110,14 +114,21 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val stateMachineSpliced: Tree =
         spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler(resultTypeTag)), enclosingOwner)
 
+      val stateMachineUsingOuter =
+        if (outerParams.isEmpty) stateMachineSpliced
+        else stateMachineSpliced.substituteThis(enclosingClass, gen.mkAttributedStableRef(stateMachine.symbol.thisType, outerParams.head.symbol))
+
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
 
+      val outerParamArgs =
+        if (outerParams.isEmpty) Nil
+        else gen.mkAttributedThis(enclosingClass) :: Nil
+
       Block(List[Tree](
-        stateMachineSpliced,
-        ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil)),
+        stateMachineUsingOuter,
+        ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), outerParamArgs)),
         spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
-        promiseToFuture(applyNilAfterUncurry(selectStateMachine(name.result)), resultType)
-      )
+        promiseToFuture(applyNilAfterUncurry(selectStateMachine(name.result)), resultType))
     }
 
     val isSimple = asyncBlock.asyncStates.size == 1
