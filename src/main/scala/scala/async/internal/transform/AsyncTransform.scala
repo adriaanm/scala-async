@@ -31,7 +31,9 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     cleanupContainsAwaitAttachments(anfTree)
     markContainsAwait(anfTree)
 
+    println("ANFANF")
     println(anfTree)
+    println("FNAFNA")
 
 //    anfTree
 
