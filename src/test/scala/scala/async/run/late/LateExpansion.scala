@@ -500,8 +500,8 @@ abstract class LatePlugin extends Plugin {
         super.transform(tree) match {
           case ap@Apply(fun, _) if fun.symbol.hasAnnotation(autoAwaitSym) =>
             localTyper.typed(transformAwait(ap))
-          case sel: Select if sel.symbol.hasAnnotation(autoAwaitSym) && !(tree.tpe.isInstanceOf[MethodTypeApi] || tree.tpe.isInstanceOf[PolyTypeApi] ) =>
-            localTyper.typed(transformAwait(sel))
+//          case sel: Select if sel.symbol.hasAnnotation(autoAwaitSym) && !(tree.tpe.isInstanceOf[MethodTypeApi] || tree.tpe.isInstanceOf[PolyTypeApi] ) =>
+//            localTyper.typed(transformAwait(sel))
           case dd: DefDef if dd.symbol.hasAnnotation(lateAsyncSym) =>
             atOwner(dd.symbol) { deriveDefDef(dd){ transformAsync }}
           case vd: ValDef if vd.symbol.hasAnnotation(lateAsyncSym) =>
@@ -512,11 +512,14 @@ abstract class LatePlugin extends Plugin {
         }
       }
       private def transformAwait(awaitable: Tree) = {
+        print(s"transformAwait $awaitable")
         Apply(typeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(awaitable.tpe) :: Nil), awaitable :: Nil)
       }
       private def transformAsync(rhs: Tree)= {
         println(s"XFORM ${rhs.tpe}")
-        localTyper.typed(atPos(rhs.pos)(expand(localTyper, transform(rhs), rhs.tpe)))
+        val res = localTyper.typed(atPos(rhs.pos)(expand(localTyper, rhs, rhs.tpe)), pt = rhs.tpe)
+        println(s"XFORMED to ${rhs.tpe}\n$res")
+        res
       }
 
     }
