@@ -71,7 +71,8 @@ private[async] trait AnfTransform extends TransformUtils {
             stats :+ expr :+ typedAt(expr.pos, Throw(Apply(Select(New(gen.mkAttributedRef(IllegalStateExceptionClass)), nme.CONSTRUCTOR), Nil)))
           expr match {
             case Apply(fun, args) if isAwait(fun) =>
-              val valDef = defineVal(name.await(), expr, tree.pos)
+              val valDef = defineVal(name.await(), expr.setType(args.head.tpe), tree.pos)
+              println(s"expand await apply: $valDef")
               val ref = gen.mkAttributedStableRef(valDef.symbol).setType(tree.tpe)
               // https://github.com/scala/async/issues/74
               // Use a cast to hide from "pure expression does nothing" error
