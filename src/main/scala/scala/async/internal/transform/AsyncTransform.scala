@@ -6,6 +6,7 @@ package scala.async.internal.transform
 
 import scala.async.internal.AsyncBase
 import scala.reflect.internal.{Flags, SymbolTable}
+import scala.tools.nsc.Global
 
 abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) extends AnfTransform with AsyncAnalysis with Lifter with LiveVariables {
   import u._
@@ -43,11 +44,6 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(tryAny)
 
-    val enclosingClass = enclosingOwner.enclClass
-    val outerParams =
-      if (!isPastErasure) Nil // we'll get to explicitouter, which will take care of this
-      else ValDef(Modifiers(Flags.ARTIFACT | Flags.STABLE), newTermName("$outer"), TypeTree(enclosingClass.tpe_*), EmptyTree) :: Nil
-
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
     // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
     // instead of splicing stuff in (spliceMethodBodies)?
@@ -59,7 +55,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
         val execContextValDef =
           mkField(execContext.tpe, name.execContext, execContext)
 
-        List(emptyConstructor, stateVar) ++ resultAndAccessors ++ execContextValDef ++ List(applyDefDefDummyBody, apply0DefDef)
+        List(stateVar) ++ resultAndAccessors ++ execContextValDef ++ List(applyDefDefDummyBody, apply0DefDef)
       }
 
       val customParents = futureSystemOps.stateMachineClassParents map transformType
@@ -72,7 +68,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val funParents = List(function1ToUnit(tryAny, useClass), function0ToUnit)
 
       // TODO: after erasure we have to change the order of these parents etc
-      val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(outerParams), body)
+      val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(Nil), body)
 
       println(s"ASYNC")
       println(showRaw(body))
@@ -114,19 +110,40 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val stateMachineSpliced: Tree =
         spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler(resultTypeTag)), enclosingOwner)
 
-      val stateMachineUsingOuter =
-        if (outerParams.isEmpty) stateMachineSpliced
-        else stateMachineSpliced.substituteThis(enclosingClass, gen.mkAttributedStableRef(stateMachine.symbol.thisType, outerParams.head.symbol))
+      val applyCtor =
+        typingTransform(Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil))((tree, api) => api.typecheck(tree))
+
+      val (stateMachineUsingOuter, newStateMachine) =
+        if (!isPastErasure) (stateMachineSpliced, applyCtor)
+        else {
+          val global: u.type with Global = u.asInstanceOf[u.type with Global]
+          val savedInfo = stateMachine.symbol.info
+          val classSym = stateMachine.symbol.asInstanceOf[global.Symbol]
+          val newInfo = global.explicitOuter.transformInfo(classSym, classSym.info)
+          val explicitOuters = new global.explicitOuter.ExplicitOuterTransformer(typingTransformers.callsiteTyper.context.unit.asInstanceOf[global.CompilationUnit])
+          val stateMachineWithOuters =
+            global.enteringExplicitOuter {
+              classSym.setInfo(newInfo) // this will go back in time and add info at explicitouter
+              explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
+            }
+
+          // TODO the transform below loops when recursing after adding the ctor arg that references the outer class...
+          println("APPLY CTOR" + applyCtor)
+          println("outerAcc" + global.explicitOuter.outerAccessor(classSym))
+          val newStateMachine =
+            global.exitingExplicitOuter { explicitOuters.transform(applyCtor.asInstanceOf[global.Tree]) }
+
+          // add our erased info back
+          stateMachine.symbol.updateInfo(savedInfo)
+
+          (stateMachineWithOuters, newStateMachine)
+        }
 
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
 
-      val outerParamArgs =
-        if (outerParams.isEmpty) Nil
-        else gen.mkAttributedThis(enclosingClass) :: Nil
-
       Block(List[Tree](
         stateMachineUsingOuter,
-        ValDef(NoMods, name.stateMachine, TypeTree(), Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), outerParamArgs)),
+        ValDef(NoMods, name.stateMachine, TypeTree(), newStateMachine),
         spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
         promiseToFuture(applyNilAfterUncurry(selectStateMachine(name.result)), resultType))
     }
