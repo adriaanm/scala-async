@@ -513,7 +513,7 @@ abstract class LatePlugin extends Plugin {
       }
       private def transformAwait(awaitable: Tree) = {
         print(s"transformAwait $awaitable")
-        Apply(typeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(awaitable.tpe) :: Nil), awaitable :: Nil)
+        Apply(typeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(awaitable.tpe) :: Nil), awaitable :: Nil).setType(awaitable.tpe)
       }
       private def transformAsync(rhs: Tree)= {
         println(s"XFORM ${rhs.tpe}")
