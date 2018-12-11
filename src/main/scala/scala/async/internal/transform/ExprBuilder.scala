@@ -133,11 +133,6 @@ trait ExprBuilder extends TransformUtils {
       mkHandlerCase(state, stats ++ List(mkStateTree(onCompleteState, symLookup)) ++ tryGetOrCallOnComplete)
     }
 
-    private def tryGetTree(tryReference: => Tree) = {
-      val tryyGet = erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
-      Assign(Ident(awaitable.resultName), mkAsInstanceOf(tryyGet, transformType(awaitable.resultType)))
-    }
-
     /* if (tr.isFailure)
      *   result.complete(tr.asInstanceOf[Try[T]])
      * else {
@@ -147,7 +142,13 @@ trait ExprBuilder extends TransformUtils {
      * }
      */
     def ifIsFailureTree[T: WeakTypeTag](tryReference: => Tree) = {
-      val getAndUpdateState = Block(List(tryGetTree(tryReference)), mkStateTree(nextState, symLookup))
+      val tryyGet =
+        // no need to cast past erasure, and in fact we should leave boxing or casting to the erasure typer
+        if (isPastErasure) erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
+        else mkAsInstanceOf(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree, awaitable.resultType)
+
+
+      val getAndUpdateState = Block(List(Assign(Ident(awaitable.resultName), tryyGet)), mkStateTree(nextState, symLookup))
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(erase(futureSystemOps.completeProm[T](

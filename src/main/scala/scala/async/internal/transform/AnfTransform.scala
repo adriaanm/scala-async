@@ -72,7 +72,7 @@ private[async] trait AnfTransform extends TransformUtils {
           expr match {
             case Apply(fun, args) if isAwait(fun) =>
               val awaitResType = args.head.tpe
-              val valDef = defineVal(name.await(), expr.setType(awaitResType), tree.pos)
+              val valDef = defineVal(name.await(), expr, tree.pos)(awaitResType)
               println(s"expand await apply: $valDef")
               val ref = gen.mkAttributedStableRef(valDef.symbol).setType(awaitResType)
               // https://github.com/scala/async/issues/74
@@ -156,8 +156,8 @@ private[async] trait AnfTransform extends TransformUtils {
         }
       }
 
-      def defineVal(name: TermName, lhs: Tree, pos: Position): ValDef = {
-        val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(uncheckedBounds(transformType(lhs.tpe)))
+      def defineVal(name: TermName, lhs: Tree, pos: Position)(tp: Type = uncheckedBounds(transformType(lhs.tpe))): ValDef = {
+        val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(tp)
         ValDef(sym, lhs.changeOwner((currentOwner, sym))).setType(NoType).setPos(pos)
       }
 
@@ -201,7 +201,7 @@ private[async] trait AnfTransform extends TransformUtils {
                   case Arg(expr, _, argName)                                    =>
                     linearize.transformToList(expr) match {
                       case stats :+ expr1 =>
-                        val valDef = defineVal(name.freshen(argName), expr1, expr1.pos)
+                        val valDef = defineVal(name.freshen(argName), expr1, expr1.pos)()
                         require(valDef.tpe != null, valDef)
                         val stats1 = stats :+ valDef
                         (stats1, atPos(tree.pos.makeTransparent)(gen.stabilize(gen.mkAttributedIdent(valDef.symbol))))
@@ -269,7 +269,7 @@ private[async] trait AnfTransform extends TransformUtils {
                   val block = linearize.transformToBlock(body)
                   val (valDefs, mappings) = (pat collect {
                     case b@Bind(bindName, _) =>
-                      val vd = defineVal(name.freshen(bindName.toTermName), gen.mkAttributedStableRef(b.symbol).setPos(b.pos), b.pos)
+                      val vd = defineVal(name.freshen(bindName.toTermName), gen.mkAttributedStableRef(b.symbol).setPos(b.pos), b.pos)()
                       vd.symbol.updateAttachment(SyntheticBindVal)
                       (vd, (b.symbol, vd.symbol))
                   }).unzip
