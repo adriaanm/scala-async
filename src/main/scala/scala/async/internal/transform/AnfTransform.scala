@@ -158,7 +158,13 @@ private[async] trait AnfTransform extends TransformUtils {
 
       def defineVal(name: TermName, lhs: Tree, pos: Position)(tp: Type = uncheckedBounds(transformType(lhs.tpe))): ValDef = {
         val sym = currentOwner.newTermSymbol(name, pos, Flags.SYNTHETIC).setInfo(tp)
-        ValDef(sym, lhs.changeOwner((currentOwner, sym))).setType(NoType).setPos(pos)
+
+        val lhsOwned = lhs.changeOwner((currentOwner, sym))
+        val rhs =
+          if (isPastErasure && isUnitType(tp)) Block(lhsOwned :: Nil, literalUnit)
+          else lhsOwned
+        ValDef(sym, rhs).setType(NoType).setPos(pos)
+
       }
 
       object _anf {
@@ -281,7 +287,7 @@ private[async] trait AnfTransform extends TransformUtils {
               scrutStats :+ treeCopy.Match(tree, scrutExpr, caseDefs)
 
             case LabelDef(name, params, rhs) =>
-              if (isUnitType(tree.symbol.info))
+              if (!isPastErasure && isUnitType(tree.symbol.info)) // erasure has already inserted unit
                 List(treeCopy.LabelDef(tree, name, params, typed(Block(linearize.transformToList(rhs), literalUnit))).setSymbol(tree.symbol))
               else
                 List(treeCopy.LabelDef(tree, name, params, typed(listToBlock(linearize.transformToList(rhs)))).setSymbol(tree.symbol))

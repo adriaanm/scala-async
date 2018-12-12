@@ -412,7 +412,7 @@ class LateExpansion {
       val settings = new Settings(println(_))
       settings.outdir.value = out.getAbsolutePath
       settings.embeddedDefaults(getClass.getClassLoader)
-      settings.printtypes.value = true
+//      settings.printtypes.value = true
 //      settings.debug.value = true
 //      settings.Ytyperdebug.value = true
 //      settings.uniqid.value = true

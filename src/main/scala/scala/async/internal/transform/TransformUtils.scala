@@ -48,11 +48,9 @@ trait PhasedTransform extends AsyncContext {
   def typeEqualsNothing(tp: Type) = tp =:= definitions.NothingTpe
 
   def typeEqualsUnit(tp: Type) = tp =:= definitions.UnitTpe || (isPastErasure && tp =:= definitions.BoxedUnitTpe)
-  def castToUnit(t: Tree) =
-    gen.mkCast(t, definitions.UnitTpe)
 
   def assignUnitType(t: Tree): t.type =
-    t.setType(if (isPastErasure) definitions.BoxedUnitTpe else definitions.UnitTpe)
+    t.setType(definitions.UnitTpe)
 
   def setUnitMethodInfo(sym: Symbol): sym.type = sym.setInfo(MethodType(Nil, if (isPastErasure) definitions.BoxedUnitTpe else definitions.UnitTpe))
 
