@@ -119,29 +119,25 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
           val global: u.type with Global = u.asInstanceOf[u.type with Global]
 
           stateMachineSpliced foreach {
-            case dt: DefTree if dt.hasExistingSymbol =>
+            case dt: DefTree if dt.hasExistingSymbol => // TODO: why can't we skip symbols that hasTypeAt(currentRun.explicitouterPhase.id)
               val sym = dt.symbol
               val savedInfo = sym.info
               val classSym = sym.asInstanceOf[global.Symbol]
               val newInfo = global.explicitOuter.transformInfo(classSym, classSym.info)
-              if (newInfo ne savedInfo) {
-                // this will go back in time and add info at explicitouter, but wipe out our current info
-                global.enteringExplicitOuter {
-                  classSym.setInfo(newInfo)
-                }
-                // add our erased info back
-                sym.updateInfo(savedInfo)
-              }
+              // we can't go back to explicit outer phase to retro-actively un-erase our current info and then add explicit outers,
+              // we just have to run the explicitOuter info transform now (during erasure) and hope for the best
+              if (newInfo ne savedInfo)
+                classSym.setInfo(newInfo)
             case _ =>
           }
 
           val explicitOuters = new global.explicitOuter.ExplicitOuterTransformer(typingTransformers.callsiteTyper.context.unit.asInstanceOf[global.CompilationUnit])
 
-          val stateMachineWithOuters = global.enteringExplicitOuter {
+          val stateMachineWithOuters = {
             explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
           }
 
-          val newStateMachine = global.enteringExplicitOuter {
+          val newStateMachine = {
             explicitOuters.atOwner(stateMachine.symbol.owner.asInstanceOf[global.Symbol]) {
               explicitOuters.transform(applyCtor.asInstanceOf[global.Tree])
             }
