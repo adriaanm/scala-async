@@ -117,24 +117,35 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
         if (!isPastErasure) (stateMachineSpliced, applyCtor)
         else {
           val global: u.type with Global = u.asInstanceOf[u.type with Global]
-          val savedInfo = stateMachine.symbol.info
-          val classSym = stateMachine.symbol.asInstanceOf[global.Symbol]
-          val newInfo = global.explicitOuter.transformInfo(classSym, classSym.info)
+
+          stateMachineSpliced foreach {
+            case dt: DefTree if dt.hasExistingSymbol =>
+              val sym = dt.symbol
+              val savedInfo = sym.info
+              val classSym = sym.asInstanceOf[global.Symbol]
+              val newInfo = global.explicitOuter.transformInfo(classSym, classSym.info)
+              if (newInfo ne savedInfo) {
+                // this will go back in time and add info at explicitouter, but wipe out our current info
+                global.enteringExplicitOuter {
+                  classSym.setInfo(newInfo)
+                }
+                // add our erased info back
+                sym.updateInfo(savedInfo)
+              }
+            case _ =>
+          }
+
           val explicitOuters = new global.explicitOuter.ExplicitOuterTransformer(typingTransformers.callsiteTyper.context.unit.asInstanceOf[global.CompilationUnit])
-          val stateMachineWithOuters =
-            global.enteringExplicitOuter {
-              classSym.setInfo(newInfo) // this will go back in time and add info at explicitouter
-              explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
+
+          val stateMachineWithOuters = global.enteringExplicitOuter {
+            explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
+          }
+
+          val newStateMachine = global.enteringExplicitOuter {
+            explicitOuters.atOwner(stateMachine.symbol.owner.asInstanceOf[global.Symbol]) {
+              explicitOuters.transform(applyCtor.asInstanceOf[global.Tree])
             }
-
-          // TODO the transform below loops when recursing after adding the ctor arg that references the outer class...
-          println("APPLY CTOR" + applyCtor)
-          println("outerAcc" + global.explicitOuter.outerAccessor(classSym))
-          val newStateMachine =
-            global.exitingExplicitOuter { explicitOuters.transform(applyCtor.asInstanceOf[global.Tree]) }
-
-          // add our erased info back
-          stateMachine.symbol.updateInfo(savedInfo)
+          }
 
           (stateMachineWithOuters, newStateMachine)
         }
