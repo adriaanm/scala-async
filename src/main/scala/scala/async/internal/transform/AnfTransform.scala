@@ -72,17 +72,24 @@ private[async] trait AnfTransform extends TransformUtils {
           expr match {
             case Apply(fun, args) if isAwait(fun) =>
               val awaitResType = args.head.tpe
-              val valDef = defineVal(name.await(), expr, tree.pos)(awaitResType)
-              println(s"expand await apply: $valDef")
-              val ref = gen.mkAttributedStableRef(valDef.symbol).setType(awaitResType)
-              // https://github.com/scala/async/issues/74
-              // Use a cast to hide from "pure expression does nothing" error
-              // TODO avoid creating a ValDef for the result of this await to avoid this tree shape altogether.
-              // This will require some deeper changes to the later parts of the macro which currently assume regular
-              // tree structure around `await` calls.
-              val refNoPureExpr = noPureExpr(ref) match { case `ref` => atPos(tree.pos)(ref) case cast => typedAt(tree.pos, cast) }
-              stats :+ valDef :+ refNoPureExpr
-
+              if (isUnitType(awaitResType)) {
+                println(s"expand await unit: $expr")
+                stats :+ expr
+              } else {
+                val valDef = defineVal(name.await(), expr, tree.pos)(awaitResType)
+                println(s"expand await apply: $valDef")
+                val ref = gen.mkAttributedStableRef(valDef.symbol).setType(awaitResType)
+                // https://github.com/scala/async/issues/74
+                // Use a cast to hide from "pure expression does nothing" error
+                // TODO avoid creating a ValDef for the result of this await to avoid this tree shape altogether.
+                // This will require some deeper changes to the later parts of the macro which currently assume regular
+                // tree structure around `await` calls.
+                val refNoPureExpr = noPureExpr(ref) match {
+                  case `ref` => atPos(tree.pos)(ref)
+                  case cast => typedAt(tree.pos, cast)
+                }
+                stats :+ valDef :+ refNoPureExpr
+              }
             case If(cond, thenp, elsep) =>
               // If we run the ANF transform post patmat, deal with trees like `(if (cond) jump1(){String} else jump2(){String}){String}`
               // as though it was typed with `Unit`.
