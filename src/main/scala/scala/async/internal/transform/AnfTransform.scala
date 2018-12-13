@@ -80,7 +80,10 @@ private[async] trait AnfTransform extends TransformUtils {
               // TODO avoid creating a ValDef for the result of this await to avoid this tree shape altogether.
               // This will require some deeper changes to the later parts of the macro which currently assume regular
               // tree structure around `await` calls.
-              val refNoPureExpr = noPureExpr(ref) match { case `ref` => atPos(tree.pos)(ref) case cast => typedAt(tree.pos, cast) }
+              val refNoPureExpr =
+                if (!isPastErasure && typeEqualsUnit(ref.tpe)) typedAt(tree.pos, gen.mkCast(ref, ref.tpe))
+                else atPos(tree.pos)(ref)
+
               stats :+ valDef :+ refNoPureExpr
 
             case If(cond, thenp, elsep) =>

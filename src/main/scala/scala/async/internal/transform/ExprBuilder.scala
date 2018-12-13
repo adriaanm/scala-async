@@ -303,10 +303,17 @@ trait ExprBuilder extends TransformUtils {
       }
     }
 
+    // unwrap Block(t :: Nil, scala.runtime.BoxedUnit.UNIT) -- erasure will add the expr when await had type Unit
+    object UnwrapBoxedUnit {
+      def unapply(tree: Tree): Some[Tree] = tree match {
+        case Block(t :: Nil, unit) if isLiteralUnit(unit) => Some(t) // is really only going to be BoxedUnit, but hey
+        case t => Some(t)
+      }
+    }
     // populate asyncStates
     def add(stat: Tree, afterState: Option[Int] = None): Unit = stat match {
       // the val name = await(..) pattern
-      case vd @ ValDef(mods, name, tpt, Apply(fun, arg :: Nil)) if isAwait(fun) =>
+      case vd @ ValDef(mods, name, tpt, UnwrapBoxedUnit(Apply(fun, arg :: Nil))) if isAwait(fun) =>
         val onCompleteState = nextState()
         val afterAwaitState = afterState.getOrElse(nextState())
         val awaitable = Awaitable(arg, stat.symbol, tpt.tpe, vd)
