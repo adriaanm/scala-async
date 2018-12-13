@@ -410,7 +410,7 @@ class LateExpansion {
 //      settings.debug.value = true
 //      settings.Ytyperdebug.value = true
 //      settings.uniqid.value = true
-      settings.Xprint.value = List("postpatmat", "flatten")
+      settings.Xprint.value = List("postpatmat", "constr", "flatten")
       val isInSBT = !settings.classpath.isSetByUser
       if (isInSBT) settings.usejavacp.value = true
       val global = new Global(settings, reporter) {
