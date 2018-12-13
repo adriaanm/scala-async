@@ -174,10 +174,8 @@ class LateExpansion {
   }
 
   @Test def patternAlternative(): Unit = {
-    val result = run(
+    val result = wrapAndRun(
       """
-        |import scala.async.run.late.{autoawait,lateasync}
-        |object Test {
         |  @autoawait def one = 1
         |
         |  @lateasync def test = {
@@ -186,22 +184,18 @@ class LateExpansion {
         |      case Some(v) => one; v
         |    }
         |  }
-        |}
         | """.stripMargin)
   }
 
   @Test def patternAlternativeBothAnnotations(): Unit = {
-    val result = run(
+    val result = wrapAndRun(
       """
-        |import scala.async.run.late.{autoawait,lateasync}
-        |object Test {
         | @autoawait def func1() = "hello"
         | @lateasync def func(a: Option[Boolean]) = a match {
         |    case null | None => func1 + " world"
         |    case _ => "okay"
         |  }
         |  def test: Any = func(None)
-        |}
         | """.stripMargin)
   }
 
