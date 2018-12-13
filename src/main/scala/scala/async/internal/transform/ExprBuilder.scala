@@ -64,7 +64,7 @@ trait ExprBuilder extends TransformUtils {
       adaptToUnitIgnoringNothing(tree :: stats) :: Nil
 
     final def allStats: List[Tree] = this match {
-      case a: AsyncStateWithAwait => treeThenStats(a.awaitable.result)
+      case a: AsyncStateWithAwait => treeThenStats(a.awaitable.resultValDef)
       case _ => stats
     }
 
@@ -147,11 +147,8 @@ trait ExprBuilder extends TransformUtils {
         if (isPastErasure) erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
         else mkAsInstanceOf(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree, awaitable.resultType)
 
-      // resultName == NoSymbol for a unit-typed await
-      // TODO: I tried just doing a tryyGet since there's no val to assign, but that doesn't work
-      val getAndUpdateState =
-        Block(List(Assign(Ident(awaitable.resultName), tryyGet)), mkStateTree(nextState, symLookup))
 
+      val getAndUpdateState = Block(List(Assign(Ident(awaitable.resultName), tryyGet)), mkStateTree(nextState, symLookup))
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(erase(futureSystemOps.completeProm[T](
@@ -313,15 +310,6 @@ trait ExprBuilder extends TransformUtils {
         val onCompleteState = nextState()
         val afterAwaitState = afterState.getOrElse(nextState())
         val awaitable = Awaitable(arg, stat.symbol, tpt.tpe, vd)
-        asyncStates += stateBuilder.resultWithAwait(awaitable, onCompleteState, afterAwaitState) // complete with await
-        currState = afterAwaitState
-        stateBuilder = new AsyncStateBuilder(currState, symLookup)
-
-      // direct await(..) for Unit result
-      case Apply(fun, arg :: Nil) if isAwait(fun) =>
-        val onCompleteState = nextState()
-        val afterAwaitState = afterState.getOrElse(nextState())
-        val awaitable = Awaitable(arg, NoSymbol, stat.tpe, stat)
         asyncStates += stateBuilder.resultWithAwait(awaitable, onCompleteState, afterAwaitState) // complete with await
         currState = afterAwaitState
         stateBuilder = new AsyncStateBuilder(currState, symLookup)
@@ -643,7 +631,7 @@ trait ExprBuilder extends TransformUtils {
     case _                                    => false
   }
 
-  case class Awaitable(expr: Tree, resultName: Symbol, resultType: Type, result: Tree)
+  case class Awaitable(expr: Tree, resultName: Symbol, resultType: Type, resultValDef: ValDef)
 
   private def mkStateTree(nextState: Int, symLookup: SymLookup): Tree =
     Assign(symLookup.memberRef(name.state), Literal(Constant(nextState)))

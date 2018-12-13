@@ -136,9 +136,7 @@ trait PhasedTransform extends AsyncContext {
     }
 
   // Use a cast to hide from "pure expression does nothing" error
-  def noPureExpr(tree: Tree) =
-    if (typeEqualsUnit(tree.tpe) && !isPastErasure) gen.mkCast(tree, definitions.UnitTpe) // really just care about whether we're past refchecks
-    else tree
+  def noPureExpr(tree: Tree) = if (typeEqualsUnit(tree.tpe)) castToUnit(tree) else tree
 
   private def derivedValueClassUnbox(cls: Symbol) =
     (cls.info.decls.find(sym => sym.isMethod && sym.asTerm.isParamAccessor) getOrElse NoSymbol)
