@@ -17,11 +17,13 @@ trait ExprBuilder extends TransformUtils {
   lazy val futureSystem: FutureSystem = asyncBase.futureSystem
   lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
 
-  // a lightweight erasure transform to handle trees coming from the future system customisation hooks
+  // a very incomplete erasure transform to handle trees coming from the future system customisation hooks
+  // TODO: remove this hack, make the future system responsible for providing phase-appropriate trees
   def erase(t: Tree): Tree = {
     object xform extends Transformer {
+      private val notErased = Set[Symbol](definitions.Object_asInstanceOf, definitions.Object_isInstanceOf)
       override def transform(tree: Tree): Tree = tree match {
-        case TypeApply(fun, _) if !fun.symbol.name.toString.contains("asInstanceOf") => transform(fun) // TODO: improve handling of asInstanceOf (erase type)
+        case TypeApply(fun, _) if !notErased(fun.symbol) => transform(fun) // TODO: improve handling of asInstanceOf (erase type)
         case AppliedTypeTree(fun, _) => transform(fun)
 //        case TypeTree() => tree setType erasure.scalaErasure(tree.tpe)
         case _ => super.transform(tree)
@@ -522,9 +524,9 @@ trait ExprBuilder extends TransformUtils {
         val caseForLastState: CaseDef = {
           val lastState = asyncStates.last
           val lastStateBody = Expr[T](lastState.body)
-          val rhs = futureSystemOps.completeWithSuccess(
-            Expr[futureSystem.Prom[T]](selectResult(symLookup)), lastStateBody)
-          mkHandlerCase(lastState.state, Block(erase(rhs.tree), Return(literalUnit)))
+          val rhs = erase(futureSystemOps.completeWithSuccess(
+            Expr[futureSystem.Prom[T]](selectResult(symLookup)), lastStateBody).tree)
+          mkHandlerCase(lastState.state, Block(rhs, Return(literalUnit)))
         }
         asyncStates match {
           case s :: Nil =>
