@@ -255,7 +255,9 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, newRhsTyped)
     }
 
-    liftablesUseFields.foreach(t => if (t.symbol != null) stateMachineClass.info.decls.enter(t.symbol))
+    // TODO: refine the resetting of the lazy flag -- this is so that local lazy vals that are lifted to the class
+    // actually get their LazyRef allocated to the var that holds the lazy val's reference
+    liftablesUseFields.foreach(t => if (t.symbol != null) stateMachineClass.info.decls.enter(t.symbol).resetFlag(Flags.LAZY))
 
     val result0 = transformAt(treeSubst) {
       case t@Template(parents, self, stats) =>
