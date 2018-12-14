@@ -34,7 +34,9 @@ trait FutureSystem {
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
     def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
 
-    def literalUnitExpr = Expr[Unit](Literal(Constant(())))
+    def literalUnitExpr = Expr[Unit](if (isPastErasure) gen.mkAttributedRef(definitions.BoxedUnit_UNIT) else Literal(Constant(())))
+
+    def phasedAppliedType(tycon: Type, tp: Type) = if (isPastErasure) tycon else appliedType(tycon, tp)
 
     def promType(tp: Type): Type
     def tryType(tp: Type): Type
@@ -88,6 +90,7 @@ trait FutureSystem {
   def resultFieldName: String = "result"
 }
 
+// TODO AM: test the erased version by running the remainder of the test suite post-posterasure (i.e., not LateExpansion, which tests AsyncId)
 object ScalaConcurrentFutureSystem extends FutureSystem {
   import scala.concurrent._
 
@@ -100,31 +103,50 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   class ScalaConcurrentOps[Universe <: SymbolTable](u0: Universe, isPastErasure: Boolean) extends Ops[Universe](u0, isPastErasure) {
     import u._
 
-    def promType(tp: Type): Type = appliedType(weakTypeOf[Promise[_]], tp)
-    def tryType(tp: Type): Type = appliedType(weakTypeOf[scala.util.Try[_]], tp)
-//    def execContextType: Type = weakTypeOf[ExecutionContext]
+    def promType(tp: Type): Type = phasedAppliedType(weakTypeOf[Promise[_]], tp)
+    def tryType(tp: Type): Type = phasedAppliedType(weakTypeOf[scala.util.Try[_]], tp)
 
-    def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {
-      Promise[A]()
+    def createProm[A: WeakTypeTag]: Expr[Prom[A]] = {
+      val newProm = reify { Promise[A]() }
+      if (isPastErasure)
+        Expr[Prom[A]](newProm.tree match { // drop type apply
+          case ap@Apply(TypeApply(prom, _), args) => treeCopy.Apply(ap, prom, args)
+        })
+      else newProm
     }
 
     def promiseToFuture[A: WeakTypeTag](prom: Expr[Prom[A]]) = reify {
       prom.splice.future
     }
 
-    def future[A: WeakTypeTag](a: Expr[A])(execContext: Expr[ExecContext]) = reify {
-      Future(a.splice)(execContext.splice)
+    def future[A: WeakTypeTag](a: Expr[A])(execContext: Expr[ExecContext]) = {
+      val expr = reify { Future(a.splice)(execContext.splice) }
+      if (isPastErasure)
+        expr.tree match {
+          case ap@Apply(Apply(fut, a), execCtx) => Expr[Future[A]](treeCopy.Apply(ap, fut, a ++ execCtx))
+        }
+      else expr
     }
 
     def onComplete[A, B](future: Expr[Fut[A]], fun: Expr[scala.util.Try[A] => B],
-                         execContext: Expr[ExecContext]): Expr[Unit] = reify {
-      future.splice.onComplete(fun.splice)(execContext.splice)
+                         execContext: Expr[ExecContext]): Expr[Unit] = {
+      val expr = reify { future.splice.onComplete(fun.splice)(execContext.splice) }
+      if (isPastErasure)
+        expr.tree match {
+          case ap@Apply(Apply(fut, fun), execCtx) => Expr[Unit](treeCopy.Apply(ap, fut, fun ++ execCtx))
+        }
+      else expr
     }
 
     override def continueCompletedFutureOnSameThread: Boolean = true
 
-    override def getCompleted[A: WeakTypeTag](future: Expr[Fut[A]]): Expr[Tryy[A]] = reify {
-      if (future.splice.isCompleted) future.splice.value.get else null
+    override def getCompleted[A: WeakTypeTag](future: Expr[Fut[A]]): Expr[Tryy[A]] = {
+      val valueGet = reify { future.splice.value.get }
+      val isCompleted = reify { future.splice.isCompleted }
+      reify {
+        if ({ if (isPastErasure) Expr[Boolean](Apply(isCompleted.tree, Nil)) else isCompleted }.splice)
+          { if (isPastErasure) Expr[Tryy[A]](Apply(valueGet.tree, Nil)) else valueGet }.splice else null
+      }
     }
 
     def completeProm[A](prom: Expr[Prom[A]], value: Expr[scala.util.Try[A]]): Expr[Unit] = reify {
@@ -132,18 +154,33 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
       literalUnitExpr.splice
     }
 
-    def tryyIsFailure[A](tryy: Expr[scala.util.Try[A]]): Expr[Boolean] = reify {
-      tryy.splice.isFailure
+    def tryyIsFailure[A](tryy: Expr[scala.util.Try[A]]): Expr[Boolean] = {
+      val expr = reify { tryy.splice.isFailure }
+      if (isPastErasure) Expr[Boolean](Apply(expr.tree, Nil))
+      else expr
     }
 
-    def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A] = reify {
-      tryy.splice.get
+    def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A] = {
+      val expr = reify { tryy.splice.get }
+      if (isPastErasure) Expr[A](Apply(expr.tree, Nil))
+      else expr
     }
-    def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[Tryy[A]] = reify {
-      scala.util.Success[A](a.splice)
+
+    def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[Tryy[A]] = {
+      val expr = reify { scala.util.Success[A](a.splice) }
+      if (isPastErasure)
+        Expr[Tryy[A]](expr.tree match { // drop type apply
+          case ap@Apply(TypeApply(succ, _), args) => treeCopy.Apply(ap, succ, args)
+        })
+      else expr
     }
-    def tryyFailure[A: WeakTypeTag](a: Expr[Throwable]): Expr[Tryy[A]] = reify {
-      scala.util.Failure[A](a.splice)
+    def tryyFailure[A: WeakTypeTag](a: Expr[Throwable]): Expr[Tryy[A]] = {
+      val expr = reify { scala.util.Failure[A](a.splice) }
+      if (isPastErasure)
+        Expr[Tryy[A]](expr.tree match { // drop type apply
+          case ap@Apply(TypeApply(fail, _), args) => treeCopy.Apply(ap, fail, args)
+        })
+      else expr
     }
   }
 }

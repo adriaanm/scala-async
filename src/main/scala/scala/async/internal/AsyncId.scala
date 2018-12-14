@@ -56,18 +56,8 @@ object IdentityFutureSystem extends FutureSystem {
   class IdentityOps[Universe <: SymbolTable](u0: Universe, isPastErasure: Boolean) extends Ops[Universe](u0, isPastErasure) {
     import u._
 
-    def promType(tp: Type): Type = {
-      val tycon = weakTypeOf[Box[_]]
-
-      if (isPastErasure) tycon
-      else appliedType(tycon, tp)
-    }
-    def tryType(tp: Type): Type = {
-      val tycon = weakTypeOf[scala.util.Try[_]]
-
-      if (isPastErasure) tycon
-      else appliedType(tycon, tp)
-    }
+    def promType(tp: Type): Type = phasedAppliedType(weakTypeOf[Box[_]], tp)
+    def tryType(tp: Type): Type = phasedAppliedType(weakTypeOf[util.Try[_]], tp)
 
     def createProm[A: WeakTypeTag]: Expr[Prom[A]] = {
       val newProm = reify { new Prom[A]() }
@@ -129,7 +119,6 @@ object IdentityFutureSystem extends FutureSystem {
           case ap@Apply(TypeApply(fail, _), args) => treeCopy.Apply(ap, fail, args)
         })
       else expr
-
     }
   }
 }

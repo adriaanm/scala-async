@@ -11,11 +11,9 @@ import org.junit.{Assert, Test}
 
 import scala.annotation.StaticAnnotation
 import scala.annotation.meta.{field, getter}
-import scala.async.TreeInterrogation
-import scala.async.internal.{AsyncBase, AsyncId}
+import scala.async.internal.AsyncId
 import scala.async.internal.transform.{AsyncNames, AsyncTransform}
 import scala.reflect.internal.util.ScalaClassLoader.URLClassLoader
-import scala.reflect.macros.{Aliases, Internals}
 import scala.tools.nsc._
 import scala.tools.nsc.plugins.{Plugin, PluginComponent}
 import scala.tools.nsc.reporters.StoreReporter
