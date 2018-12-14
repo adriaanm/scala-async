@@ -58,14 +58,11 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       // TODO AM: after erasure we have to change the order of these parents etc
       val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(Nil), body)
 
-      // TODO AM: use global and get rid of this roundabout type checking hack?
-      // or can we skip the type checking entirely and just create a symbol?
-      {
-        val Block(cd1 :: Nil, _) =
-          typingTransform(atPos(asyncPos)(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
-
-        cd1.asInstanceOf[ClassDef]
-      }
+      // TODO AM: can we skip the type checking and just create a symbol?
+      val classSym = enclosingOwner.newClassSymbol(name.stateMachineT, asyncPos, 0)
+      val cd = ClassDef(NoMods, name.stateMachineT, Nil, templ).setSymbol(classSym).asInstanceOf[typingTransformers.global.ClassDef]
+      classSym.setInfo(typingTransformers.callsiteTyper.namer.monoTypeCompleter(cd))
+      typingTransformers.callsiteTyper.typedClassDef(atPos(asyncPos)(cd)).asInstanceOf[ClassDef]
     }
 
     val asyncBlock: AsyncBlock = {
