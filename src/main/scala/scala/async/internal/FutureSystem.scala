@@ -40,7 +40,6 @@ trait FutureSystem {
 
     def promType(tp: Type): Type
     def tryType(tp: Type): Type
-//    def execContextType: Type
     def stateMachineClassParents: List[Type] = Nil
 
     /** Create an empty promise */

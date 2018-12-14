@@ -63,7 +63,6 @@ abstract class AsyncBase {
 
       val Async_async = asyncMethod(u)(asyncMacroSymbol)
       val Async_await = awaitMethod(u)(asyncMacroSymbol)
-      val asyncPos    = asyncMacroSymbol.pos.makeTransparent
 
       // a few forwarders to context, since they are not easily available through SymbolTable
       def typecheck(tree: Tree): Tree = ctx.typecheck(tree)
@@ -76,7 +75,7 @@ abstract class AsyncBase {
 
     val enclosingOwner = ctx.internal.enclosingOwner
     val code =
-      try asyncMacro.asyncTransform(body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner)(ctx.weakTypeTag[T].tpe)
+      try asyncMacro.asyncTransform(body.tree.asInstanceOf[ctx.Tree], execContext.tree.asInstanceOf[ctx.Tree], enclosingOwner, asyncMacroSymbol.pos.makeTransparent)(ctx.weakTypeTag[T].tpe)
       catch { case te: ctx.universe.TypeError => ctx.info(enclosingOwner.pos, te.getStackTrace.mkString("\n"), true); ??? }
 
     AsyncUtils.vprintln(s"async state machine transform expands to:\n $code")

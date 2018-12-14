@@ -12,12 +12,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
   import u._
   import typingTransformers.{TypingTransformApi, typingTransform}
 
-  def asyncTransform(body: Tree, execContext: Tree, enclosingOwner: Symbol)(resultType: Type): Tree = {
-    // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
-    // warnings about non-conformant LUBs. See SI-7694
-    // This implicit propagates the annotated type in the type tag.
-//    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
-
+  def asyncTransform(body: Tree, execContext: Tree, enclosingOwner: Symbol, asyncPos: Position)(resultType: Type): Tree = {
     markContainsAwait(body) // TODO AM: is this needed?
     reportUnsupportedAwaits(body)
 
@@ -31,6 +26,8 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     cleanupContainsAwaitAttachments(anfTree)
     markContainsAwait(anfTree)
 
+    // We annotate the type of the whole expression as `T @uncheckedBounds` so as not to introduce
+    // warnings about non-conformant LUBs. See SI-7694
     val resultTypeTag = WeakTypeTag(uncheckedBounds(transformType(resultType)))
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(tryAny)
@@ -61,11 +58,11 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       // TODO AM: after erasure we have to change the order of these parents etc
       val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(Nil), body)
 
-      // TODO AM: add a dependency on scala-compiler and get rid of this roundabout type checking hack?
+      // TODO AM: use global and get rid of this roundabout type checking hack?
       // or can we skip the type checking entirely and just create a symbol?
       {
         val Block(cd1 :: Nil, _) =
-          typingTransform(atAsyncPos(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
+          typingTransform(atPos(asyncPos)(Block(ClassDef(NoMods, name.stateMachineT, Nil, templ) :: Nil, literalUnit)))((tree, api) => api.typecheck(tree))
 
         cd1.asInstanceOf[ClassDef]
       }
@@ -85,7 +82,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     for ((state, flds) <- assignsOf) {
       val assigns = flds.map { fld =>
         val fieldSym = fld.symbol
-        val assign = Assign(gen.mkAttributedStableRef(thisType(fieldSym.owner), fieldSym), mkZero(fieldSym.info))
+        val assign = Assign(gen.mkAttributedStableRef(thisType(fieldSym.owner), fieldSym), mkZero(fieldSym.info, asyncPos))
         val nulled = nullOut(fieldSym)
         if (isLiteralUnit(nulled)) assign
         else Block(nulled :: Nil, assign)
@@ -96,7 +93,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
 
     def startStateMachine: Tree = {
       val stateMachineSpliced: Tree =
-        spliceMethodBodies(liftedFields, stateMachine, atAsyncPos(asyncBlock.onCompleteHandler(resultTypeTag)), enclosingOwner)
+        spliceMethodBodies(liftedFields, stateMachine, atPos(asyncPos)(asyncBlock.onCompleteHandler(resultTypeTag)), enclosingOwner)
 
       val applyCtor =
         typingTransform(Apply(Select(New(Ident(stateMachine.symbol)), nme.CONSTRUCTOR), Nil))((tree, api) => api.typecheck(tree))
@@ -151,20 +148,14 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       else startStateMachine
 
     if(AsyncUtils.verbose) {
-      logDiagnostics(anfTree, asyncBlock, asyncBlock.asyncStates.map(_.toString))
+      val location = try body.pos.source.path catch { case _: UnsupportedOperationException => body.pos.toString }
+      logDiagnostics(location, anfTree, asyncBlock, asyncBlock.asyncStates.map(_.toString))
     }
     futureSystemOps.dot(enclosingOwner, body).foreach(f => f(asyncBlock.toDot))
     cleanupContainsAwaitAttachments(result)
   }
 
-  def logDiagnostics(anfTree: Tree, block: AsyncBlock, states: Seq[String]): Unit = {
-    def location = try {
-      asyncPos.source.path
-    } catch {
-      case _: UnsupportedOperationException =>
-        asyncPos.toString
-    }
-
+  def logDiagnostics(location: String, anfTree: Tree, block: AsyncBlock, states: Seq[String]): Unit = {
     AsyncUtils.vprintln(s"In file '$location':")
     AsyncUtils.vprintln(s"ANF transform expands to:\n $anfTree")
     states foreach (s => AsyncUtils.vprintln(s))
@@ -257,5 +248,4 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     }
     result
   }
-
 }

@@ -451,8 +451,8 @@ abstract class LatePlugin extends Plugin {
 
     private val asyncNames_ = new AsyncNames[global.type](global)
 
-    def asyncTransform(localTyper: analyzer.Typer, tree: Tree, resultType: Type) = {
-      val asyncTransformId = new AsyncTransform(AsyncId, global) {
+    def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
+      object asyncTransformerUsingId extends AsyncTransform(AsyncId, global) {
         override val u: global.type = global
         import u._
 
@@ -460,7 +460,6 @@ abstract class LatePlugin extends Plugin {
 
         val Async_async = asyncSym
         val Async_await = awaitSym
-        val asyncPos    = tree.pos.makeTransparent
 
         def typecheck(tree: Tree): Tree = localTyper.typed(tree)
         def abort(pos: Position, msg: String): Nothing = {localTyper.context.reporter.error(pos, msg); ???}
@@ -468,15 +467,13 @@ abstract class LatePlugin extends Plugin {
 
         val typingTransformers =
           new TypingTransformers {
-            val callsiteTyper = localTyper.asInstanceOf[global.analyzer.Typer]
+            def callsiteTyper = localTyper.asInstanceOf[global.analyzer.Typer]
           }
       }
 
-      asyncTransformId.asyncTransform(tree, asyncTransformId.literalUnit, localTyper.context.owner)(resultType)
-    }
+      def asyncTransform(localTyper: analyzer.Typer, tree: Tree, resultType: Type) =
+        asyncTransformerUsingId.asyncTransform(tree, asyncTransformerUsingId.literalUnit, localTyper.context.owner, tree.pos.makeTransparent)(resultType)
 
-
-    def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
       def isAutoAwait(fun: Tree) = fun.symbol.hasAnnotation(autoAwaitSym)
       // TODO AM: does this rely on `futureSystem.Fut[T] = T` (as is the case for the identity future system)
       def transformAwait(awaitable: Tree) =

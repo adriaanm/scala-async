@@ -154,7 +154,7 @@ private[async] trait AnfTransform extends TransformUtils {
 
         def defineVar(name: TermName, tp: Type, pos: Position): ValDef = {
           val sym = currentOwner.newTermSymbol(name, pos, Flags.MUTABLE | Flags.SYNTHETIC).setInfo(uncheckedBounds(transformType(tp)))
-          ValDef(sym, mkZero(uncheckedBounds(tp))).setType(NoType).setPos(pos)
+          ValDef(sym, mkZero(uncheckedBounds(tp), pos)).setType(NoType).setPos(pos)
         }
       }
 
@@ -385,7 +385,7 @@ private[async] trait AnfTransform extends TransformUtils {
           case r1 :: Nil =>
             // { var matchRes = _; ....; matchRes }
             (r1 +: statsExpr0.reverse) :+ atPos(tree.pos)(gen.mkAttributedIdent(r1.symbol))
-          case _ => error(asyncPos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
+          case _ => error(tree.pos, "Internal error: unexpected tree encountered during ANF transform " + statsExpr); statsExpr
         }
       }
 

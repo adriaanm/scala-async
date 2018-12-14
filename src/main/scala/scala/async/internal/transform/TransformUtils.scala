@@ -16,8 +16,6 @@ private[async] trait AsyncContext {
   val u: SymbolTable
   import u._
 
-  // TODO AM move asyncPos to asyncTransform method
-  val asyncPos: Position
   val Async_async: Symbol
   val Async_await: Symbol
 
@@ -47,8 +45,6 @@ trait PhasedTransform extends AsyncContext {
     val erasurePhase = u.asInstanceOf[Global].currentRun.erasurePhase
     erasurePhase != NoPhase && u.asInstanceOf[Global].isPast(erasurePhase)
   }
-
-  def atAsyncPos(t: Tree): Tree = atPos(asyncPos)(t)
 
   def literalNull = Literal(Constant(null))
 
@@ -141,10 +137,10 @@ trait PhasedTransform extends AsyncContext {
   private def derivedValueClassUnbox(cls: Symbol) =
     (cls.info.decls.find(sym => sym.isMethod && sym.asTerm.isParamAccessor) getOrElse NoSymbol)
 
-  def mkZero(tp: Type): Tree = {
+  def mkZero(tp: Type, pos: Position): Tree = {
     val tpSym = tp.typeSymbol
     if (tpSym.isClass && tpSym.asClass.isDerivedValueClass) {
-      val argZero = mkZero(derivedValueClassUnbox(tpSym).infoIn(tp).resultType)
+      val argZero = mkZero(derivedValueClassUnbox(tpSym).infoIn(tp).resultType, pos)
       val baseType = tp.baseType(tpSym) // use base type here to dealias / strip phantom "tagged types" etc.
 
       // By explicitly attributing the types and symbols here, we subvert privacy.
@@ -152,12 +148,11 @@ trait PhasedTransform extends AsyncContext {
 
       // Approximately:
       // q"new ${valueClass}[$..targs](argZero)"
-      val target: Tree = gen.mkAttributedSelect(
-                                                 typecheck(atAsyncPos(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
+      val target: Tree = gen.mkAttributedSelect(typecheck(atPos(pos)(New(TypeTree(baseType)))), tpSym.asClass.primaryConstructor)
 
       val zero = gen.mkMethodCall(target, argZero :: Nil)
       // restore the original type which we might otherwise have weakened with `baseType` above
-      typecheck(atAsyncPos(gen.mkCast(zero, tp)))
+      typecheck(atPos(pos)(gen.mkCast(zero, tp)))
     } else {
       gen.mkZero(tp)
     }
@@ -564,7 +559,7 @@ private[async] trait TransformUtils extends PhasedTransform {
   abstract class TypingTransformers extends scala.tools.nsc.transform.TypingTransformers {
     val global: u.type with Global = u.asInstanceOf[u.type with Global]
 
-    val callsiteTyper: global.analyzer.Typer
+    def callsiteTyper: global.analyzer.Typer
 
     trait TransformApi {
       /** Calls the current transformer on the given tree.
