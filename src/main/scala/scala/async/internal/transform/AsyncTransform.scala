@@ -42,7 +42,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val body: List[Tree] = {
         val stateVar = ValDef(Modifiers(Flags.MUTABLE | Flags.PRIVATE | Flags.LOCAL), name.state, TypeTree(definitions.IntTpe), Literal(Constant(StateAssigner.Initial)))
         val resultAndAccessors =
-          mkMutableField(transformType(futureSystemOps.promType(uncheckedBounds(resultType))), name.result, erase(futureSystemOps.createProm[Nothing](resultTypeTag).tree))
+          mkMutableField(transformType(futureSystemOps.promType(uncheckedBounds(resultType))), name.result, futureSystemOps.createProm[Nothing](resultTypeTag).tree)
         val execContextValDef =
           mkField(execContext.tpe, name.execContext, execContext)
 

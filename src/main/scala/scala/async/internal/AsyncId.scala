@@ -69,14 +69,21 @@ object IdentityFutureSystem extends FutureSystem {
       else appliedType(tycon, tp)
     }
 
-    def createProm[A: WeakTypeTag]: Expr[Prom[A]] = reify {
-      new Prom[A]()
+    def createProm[A: WeakTypeTag]: Expr[Prom[A]] = {
+      val newProm = reify { new Prom[A]() }
+      if (isPastErasure)
+        Expr[Prom[A]](newProm.tree match {
+          // drop type apply
+          case ap@Apply(sel@Select(nw@New(AppliedTypeTree(newProm, _)), ctor), args) =>
+            treeCopy.Apply(ap, treeCopy.Select(sel, treeCopy.New(nw, newProm), ctor), args)
+        })
+      else newProm
     }
 
     def promiseToFuture[A: WeakTypeTag](prom: Expr[Prom[A]]) = {
       val expr = reify { prom.splice.a }
-      if (!isPastErasure) expr
-      else Expr[Fut[A]](Apply(expr.tree, Nil))
+      if (isPastErasure) Expr[Fut[A]](Apply(expr.tree, Nil))
+      else expr
     }
 
     def future[A: WeakTypeTag](t: Expr[A])(execContext: Expr[ExecContext]) = t
@@ -87,9 +94,12 @@ object IdentityFutureSystem extends FutureSystem {
       literalUnitExpr.splice
     }
 
-    def completeProm[A](prom: Expr[Prom[A]], value: Expr[Tryy[A]]): Expr[Unit] = reify {
-      prom.splice.a = value.splice.get
-      literalUnitExpr.splice
+    def completeProm[A](prom: Expr[Prom[A]], value: Expr[Tryy[A]]): Expr[Unit] = {
+      val valueGet = reify { value.splice.get }
+      reify {
+        prom.splice.a = { if (isPastErasure) Expr[A](Apply(valueGet.tree, Nil)) else valueGet }.splice
+        literalUnitExpr.splice
+      }
     }
 
     def tryyIsFailure[A](tryy: Expr[Tryy[A]]): Expr[Boolean] = reify {
@@ -98,15 +108,28 @@ object IdentityFutureSystem extends FutureSystem {
 
     def tryyGet[A](tryy: Expr[Tryy[A]]): Expr[A] = {
       val expr = reify { tryy.splice.get }
-      if (!isPastErasure) expr
-      else Expr[A](Apply(expr.tree, Nil))
+      if (isPastErasure) Expr[A](Apply(expr.tree, Nil))
+      else expr
     }
 
-    def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[Tryy[A]] = reify {
-      scala.util.Success[A](a.splice)
+    def tryySuccess[A: WeakTypeTag](a: Expr[A]): Expr[Tryy[A]] = {
+      val expr = reify { scala.util.Success[A](a.splice) }
+      if (isPastErasure)
+        Expr[Tryy[A]](expr.tree match {
+          // drop type apply
+          case ap@Apply(TypeApply(succ, _), args) => treeCopy.Apply(ap, succ, args)
+        })
+      else expr
     }
-    def tryyFailure[A: WeakTypeTag](a: Expr[Throwable]): Expr[Tryy[A]] = reify {
-      scala.util.Failure[A](a.splice)
+    def tryyFailure[A: WeakTypeTag](a: Expr[Throwable]): Expr[Tryy[A]] = {
+      val expr = reify { scala.util.Failure[A](a.splice) }
+      if (isPastErasure)
+        Expr[Tryy[A]](expr.tree match {
+          // drop type apply
+          case ap@Apply(TypeApply(fail, _), args) => treeCopy.Apply(ap, fail, args)
+        })
+      else expr
+
     }
   }
 }

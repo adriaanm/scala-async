@@ -17,31 +17,14 @@ trait ExprBuilder extends TransformUtils {
   lazy val futureSystem: FutureSystem = asyncBase.futureSystem
   lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u, isPastErasure)
 
-  // a very incomplete erasure transform to handle trees coming from the future system customisation hooks
-  // TODO AM: remove this hack, make the future system responsible for providing phase-appropriate trees
-  def erase(t: Tree): Tree = {
-    object xform extends Transformer {
-      private val notErased = Set[Symbol](definitions.Object_asInstanceOf, definitions.Object_isInstanceOf)
-      override def transform(tree: Tree): Tree = tree match {
-        case TypeApply(fun, _) if !notErased(fun.symbol) => transform(fun) // TODO: improve handling of asInstanceOf (erase type)
-        case AppliedTypeTree(fun, _) => transform(fun)
-//        case TypeTree() => tree setType erasure.scalaErasure(tree.tpe)
-        case _ => super.transform(tree)
-      }
-    }
-
-    if (isPastErasure) xform.transform(t)
-    else t
-  }
-
   def nullOut(fieldSym: Symbol): Tree =
     asyncBase.nullOut(u)(Expr[String](Literal(Constant(fieldSym.name.toString))), Expr[Any](Ident(fieldSym))).tree
 
   def spawn(tree: Tree, execContext: Tree): Tree =
-    erase(futureSystemOps.future(Expr[Unit](tree))(Expr[futureSystem.ExecContext](execContext)).tree)
+    futureSystemOps.future(Expr[Unit](tree))(Expr[futureSystem.ExecContext](execContext)).tree
 
   def promiseToFuture(prom: Tree, resTp: Type): Tree =
-    erase(futureSystemOps.promiseToFuture(Expr[Nothing](prom))(WeakTypeTag(resTp)).tree)
+    futureSystemOps.promiseToFuture(Expr[Nothing](prom))(WeakTypeTag(resTp)).tree
 
   def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
   def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
@@ -114,12 +97,12 @@ trait ExprBuilder extends TransformUtils {
 
     override def mkHandlerCaseForState[T: WeakTypeTag]: CaseDef = {
       val fun = This(tpnme.EMPTY)
-      val callOnComplete = erase(futureSystemOps.onComplete[Any, Unit](Expr[futureSystem.Fut[Any]](awaitable.expr),
-        Expr[futureSystem.Tryy[Any] => Unit](fun), Expr[futureSystem.ExecContext](Ident(name.execContext))).tree)
+      val callOnComplete = futureSystemOps.onComplete[Any, Unit](Expr[futureSystem.Fut[Any]](awaitable.expr),
+                                                                  Expr[futureSystem.Tryy[Any] => Unit](fun), Expr[futureSystem.ExecContext](Ident(name.execContext))).tree
       val tryGetOrCallOnComplete: List[Tree] =
         if (futureSystemOps.continueCompletedFutureOnSameThread) {
           val tempName = name.completed
-          val initTemp = ValDef(NoMods, tempName, TypeTree(tryAny), erase(futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree))
+          val initTemp = ValDef(NoMods, tempName, TypeTree(tryAny), futureSystemOps.getCompleted[Any](Expr[futureSystem.Fut[Any]](awaitable.expr)).tree)
           val null_ne = Select(Literal(Constant(null)), TermName("ne"))
           val ifTree =
             If(Apply(null_ne, Ident(tempName) :: Nil),
@@ -143,16 +126,16 @@ trait ExprBuilder extends TransformUtils {
     def ifIsFailureTree[T: WeakTypeTag](tryReference: => Tree) = {
       val tryyGet =
         // no need to cast past erasure, and in fact we should leave boxing or casting to the erasure typer
-        if (isPastErasure) erase(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree)
+        if (isPastErasure) futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree
         else mkAsInstanceOf(futureSystemOps.tryyGet[Any](Expr[futureSystem.Tryy[Any]](tryReference)).tree, awaitable.resultType)
 
 
       val getAndUpdateState = Block(List(Assign(Ident(awaitable.resultName), tryyGet)), mkStateTree(nextState, symLookup))
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
-          Block(toList(erase(futureSystemOps.completeProm[T](
-            Expr[futureSystem.Prom[T]](symLookup.selectResult),
-            Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType(implicitly[WeakTypeTag[T]].tpe))))).tree)), // TODO: this is pretty bonkers... implicitly[WeakTypeTag[T]].tpe == resultType
+          Block(toList(futureSystemOps.completeProm[T](
+                                                        Expr[futureSystem.Prom[T]](symLookup.selectResult),
+                                                        Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType(implicitly[WeakTypeTag[T]].tpe))))).tree), // TODO: this is pretty bonkers... implicitly[WeakTypeTag[T]].tpe == resultType
             Return(literalUnit)),
           getAndUpdateState
         )
@@ -524,8 +507,8 @@ trait ExprBuilder extends TransformUtils {
         val caseForLastState: CaseDef = {
           val lastState = asyncStates.last
           val lastStateBody = Expr[T](lastState.body)
-          val rhs = erase(futureSystemOps.completeWithSuccess(
-            Expr[futureSystem.Prom[T]](symLookup.selectResult), lastStateBody).tree)
+          val rhs = futureSystemOps.completeWithSuccess(
+                                                         Expr[futureSystem.Prom[T]](symLookup.selectResult), lastStateBody).tree
           mkHandlerCase(lastState.state, Block(rhs, Return(literalUnit)))
         }
         asyncStates match {
@@ -576,8 +559,8 @@ trait ExprBuilder extends TransformUtils {
             EmptyTree, {
               val branchTrue = {
                 val t = Expr[Throwable](Ident(name.t))
-                val complete = erase(futureSystemOps.completeProm[T](
-                    Expr[futureSystem.Prom[T]](symLookup.selectResult), futureSystemOps.tryyFailure[T](t)).tree)
+                val complete = futureSystemOps.completeProm[T](
+                                                                Expr[futureSystem.Prom[T]](symLookup.selectResult), futureSystemOps.tryyFailure[T](t)).tree
                 Block(toList(complete), Return(literalUnit))
               }
               If(Apply(Ident(NonFatalClass), List(Ident(name.t))), branchTrue, Throw(Ident(name.t)))
