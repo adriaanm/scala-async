@@ -15,7 +15,7 @@ trait ExprBuilder extends TransformUtils {
   import u._
 
   lazy val futureSystem: FutureSystem = asyncBase.futureSystem
-  lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u)
+  lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u, isPastErasure)
 
   // a very incomplete erasure transform to handle trees coming from the future system customisation hooks
   // TODO: remove this hack, make the future system responsible for providing phase-appropriate trees
@@ -102,9 +102,6 @@ trait ExprBuilder extends TransformUtils {
       s"AsyncStateWithoutAwait #$state, nextStates = ${nextStates.toList}"
   }
 
-  def selectResult(symLookup: SymLookup) = applyNilAfterUncurry(symLookup.memberRef(name.result))
-
-
   /** A sequence of statements that concludes with an `await` call. The `onComplete`
     * handler will unconditionally transition to `nextState`.
     */
@@ -154,7 +151,7 @@ trait ExprBuilder extends TransformUtils {
       if (emitTryCatch) {
         If(futureSystemOps.tryyIsFailure(Expr[futureSystem.Tryy[T]](tryReference)).tree,
           Block(toList(erase(futureSystemOps.completeProm[T](
-            Expr[futureSystem.Prom[T]](selectResult(symLookup)),
+            Expr[futureSystem.Prom[T]](symLookup.selectResult),
             Expr[futureSystem.Tryy[T]](mkAsInstanceOf(tryReference, transformType(futureSystemOps.tryType(implicitly[WeakTypeTag[T]].tpe))))).tree)), // TODO: this is pretty bonkers... implicitly[WeakTypeTag[T]].tpe == resultType
             Return(literalUnit)),
           getAndUpdateState
@@ -393,12 +390,15 @@ trait ExprBuilder extends TransformUtils {
     def toDot: String
   }
 
+
   case class SymLookup(stateMachineClass: Symbol, applyTrParam: Symbol) {
     def stateMachineMember(name: TermName): Symbol = {
       stateMachineClass.info.member(name)
     }
     def memberRef(name: TermName): Tree =
       gen.mkAttributedRef(stateMachineMember(name))
+
+    def selectResult = applyNilAfterUncurry(memberRef(name.result))
   }
 
   private lazy val NonFatalClass = rootMirror.staticModule("scala.util.control.NonFatal")
@@ -525,7 +525,7 @@ trait ExprBuilder extends TransformUtils {
           val lastState = asyncStates.last
           val lastStateBody = Expr[T](lastState.body)
           val rhs = erase(futureSystemOps.completeWithSuccess(
-            Expr[futureSystem.Prom[T]](selectResult(symLookup)), lastStateBody).tree)
+            Expr[futureSystem.Prom[T]](symLookup.selectResult), lastStateBody).tree)
           mkHandlerCase(lastState.state, Block(rhs, Return(literalUnit)))
         }
         asyncStates match {
@@ -577,7 +577,7 @@ trait ExprBuilder extends TransformUtils {
               val branchTrue = {
                 val t = Expr[Throwable](Ident(name.t))
                 val complete = erase(futureSystemOps.completeProm[T](
-                    Expr[futureSystem.Prom[T]](selectResult(symLookup)), futureSystemOps.tryyFailure[T](t)).tree)
+                    Expr[futureSystem.Prom[T]](symLookup.selectResult), futureSystemOps.tryyFailure[T](t)).tree)
                 Block(toList(complete), Return(literalUnit))
               }
               If(Apply(Ident(NonFatalClass), List(Ident(name.t))), branchTrue, Throw(Ident(name.t)))

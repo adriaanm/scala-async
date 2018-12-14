@@ -52,8 +52,8 @@ object IdentityFutureSystem extends FutureSystem {
   type ExecContext = Unit
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(u: SymbolTable): Ops[u.type] = new IdentityOps[u.type](u)
-  class IdentityOps[Universe <: SymbolTable](u0: Universe) extends Ops[Universe](u0) {
+  def mkOps(u: SymbolTable, isPastErasure: Boolean = false): Ops[u.type] = new IdentityOps[u.type](u, isPastErasure)
+  class IdentityOps[Universe <: SymbolTable](u0: Universe, isPastErasure: Boolean) extends Ops[Universe](u0, isPastErasure) {
     import u._
 
     def promType(tp: Type): Type = {

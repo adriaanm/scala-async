@@ -147,12 +147,14 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
         }
 
       def selectStateMachine(selection: TermName) = Select(Ident(name.stateMachine), selection)
+      def selectStateMachineResult =
+        applyNilAfterUncurry(selectStateMachine(name.result))
 
       Block(List[Tree](
         stateMachineUsingOuter,
         ValDef(NoMods, name.stateMachine, TypeTree(), newStateMachine),
         spawn(Apply(selectStateMachine(name.apply), Nil), selectStateMachine(name.execContext))),
-        promiseToFuture(applyNilAfterUncurry(selectStateMachine(name.result)), resultType))
+        promiseToFuture(selectStateMachineResult, resultType))
     }
 
     val isSimple = asyncBlock.asyncStates.size == 1
@@ -255,9 +257,12 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, newRhsTyped)
     }
 
+    liftablesUseFields.foreach(t => if (t.symbol != null) stateMachineClass.info.decls.enter(t.symbol))
+
     // TODO: refine the resetting of the lazy flag -- this is so that local lazy vals that are lifted to the class
     // actually get their LazyRef allocated to the var that holds the lazy val's reference
-    liftablesUseFields.foreach(t => if (t.symbol != null) stateMachineClass.info.decls.enter(t.symbol).resetFlag(Flags.LAZY))
+    if (isPastErasure)
+      liftablesUseFields.foreach(t => if (t.symbol != null) t.symbol.resetFlag(Flags.LAZY))
 
     val result0 = transformAt(treeSubst) {
       case t@Template(parents, self, stats) =>

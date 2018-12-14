@@ -28,10 +28,8 @@ trait FutureSystem {
 
   // We could do with just Universe <: reflect.api.Universe if it wasn't Expr and WeakTypeTag
   // (the api effectively doesn't let you call these factories since there's no way to get at the Tree- and TypeCreators)
-  abstract class Ops[Universe <: SymbolTable](val u: Universe) {
+  abstract class Ops[Universe <: SymbolTable](val u: Universe, val isPastErasure: Boolean) {
     import u._
-
-    val isPastErasure = true
 
     def Expr[T: WeakTypeTag](tree: Tree): Expr[T] = u.Expr[T](rootMirror, FixedMirrorTreeCreator(rootMirror, tree))
     def WeakTypeTag[T](tpe: Type): WeakTypeTag[T] = u.WeakTypeTag[T](rootMirror, FixedMirrorTypeCreator(rootMirror, tpe))
@@ -81,7 +79,7 @@ trait FutureSystem {
     def dot(enclosingOwner: Symbol, macroApplication: Tree): Option[(String => Unit)] = None
   }
 
-  def mkOps(u: SymbolTable): Ops[u.type]
+  def mkOps(u: SymbolTable, isPastErasure: Boolean = false): Ops[u.type]
 
   @deprecated("No longer honoured by the macro, all generated names now contain $async to avoid accidental clashes with lambda lifted names", "0.9.7")
   def freshenAllNames: Boolean = false
@@ -98,8 +96,8 @@ object ScalaConcurrentFutureSystem extends FutureSystem {
   type ExecContext = ExecutionContext
   type Tryy[A] = scala.util.Try[A]
 
-  def mkOps(u: SymbolTable): Ops[u.type] = new ScalaConcurrentOps[u.type](u)
-  class ScalaConcurrentOps[Universe <: SymbolTable](u0: Universe) extends Ops[Universe](u0) {
+  def mkOps(u: SymbolTable, isPastErasure: Boolean = false): Ops[u.type] = new ScalaConcurrentOps[u.type](u, isPastErasure)
+  class ScalaConcurrentOps[Universe <: SymbolTable](u0: Universe, isPastErasure: Boolean) extends Ops[Universe](u0, isPastErasure) {
     import u._
 
     def promType(tp: Type): Type = appliedType(weakTypeOf[Promise[_]], tp)

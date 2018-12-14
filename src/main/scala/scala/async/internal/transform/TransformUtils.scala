@@ -7,7 +7,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.internal.{Flags, SymbolTable}
 import scala.async.internal.AsyncBase
-import scala.tools.nsc.Global
+import scala.tools.nsc.{Global, NoPhase}
 import scala.language.existentials
 
 private[async] trait AsyncContext {
@@ -38,8 +38,14 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
-  val isPastUncurry = true // isPast(currentRun.uncurryPhase)
-  val isPastErasure = true
+  private lazy val isPastUncurry = isPastErasure
+  private lazy val emptyParamss: List[Nil.type] = if (isPastUncurry) List(Nil) else Nil
+  protected def applyNilAfterUncurry(t: Tree) = if (isPastUncurry) Apply(t, Nil) else t
+
+  lazy val isPastErasure = {
+    val erasurePhase = u.asInstanceOf[Global].currentRun.erasurePhase
+    erasurePhase != NoPhase && u.asInstanceOf[Global].isPast(erasurePhase)
+  }
 
   def atAsyncPos(t: Tree): Tree = atPos(asyncPos)(t)
 
@@ -67,9 +73,10 @@ trait PhasedTransform extends AsyncContext {
     case _ => false
   }
 
+
   def function0ToUnit = typeOf[() => Unit]
   def apply0DefDef: DefDef =
-    DefDef(NoMods, name.apply, Nil, if (isPastUncurry) List(Nil) else Nil, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
+    DefDef(NoMods, name.apply, Nil, emptyParamss, TypeTree(definitions.UnitTpe), Apply(Ident(name.apply), literalNull :: Nil))
 
   def function1ToUnit(argTp: Type, useClass: Boolean) = {
     val fun =
@@ -83,7 +90,6 @@ trait PhasedTransform extends AsyncContext {
     DefDef(NoMods, name.apply, Nil, applyVParamss, TypeTree(definitions.UnitTpe), literalUnit)
   }
 
-  def applyNilAfterUncurry(t: Tree) = if (isPastUncurry) Apply(t, Nil) else t
 
   def transformParentTypes(tps: List[Type]) = {
     val tpsErased = tps.map(transformType)
@@ -188,7 +194,7 @@ trait PhasedTransform extends AsyncContext {
       // If we are running after the typer phase (ie being called from a compiler plugin)
       // we have to create the trio of members manually.
       val field = ValDef(Modifiers(MUTABLE | PRIVATE | LOCAL), name.localName, TypeTree(tpt), init)
-      val paramss = if (isPastUncurry) List(Nil) else Nil
+      val paramss = emptyParamss
       val getter = DefDef(Modifiers(ACCESSOR | STABLE), name.getterName, Nil, paramss, TypeTree(tpt), Select(This(tpnme.EMPTY), field.name))
       val setter = DefDef(Modifiers(ACCESSOR), name.setterName, Nil, List(List(ValDef(NoMods, TermName("x"), TypeTree(tpt), EmptyTree))), TypeTree(definitions.UnitTpe), Assign(Select(This(tpnme.EMPTY), field.name), Ident(TermName("x"))))
       field :: getter :: setter :: Nil
@@ -203,7 +209,7 @@ trait PhasedTransform extends AsyncContext {
       // If we are running after the typer phase (ie being called from a compiler plugin)
       // we have to create the trio of members manually.
       val field = ValDef(Modifiers(PRIVATE | LOCAL), name.localName, TypeTree(tpt), init)
-      val paramss = if (isPastUncurry) List(Nil) else Nil
+      val paramss = emptyParamss
       val getter = DefDef(Modifiers(ACCESSOR | STABLE), name.getterName, Nil, paramss, TypeTree(tpt), Select(This(tpnme.EMPTY), field.name))
       field :: getter :: Nil
     } else {
