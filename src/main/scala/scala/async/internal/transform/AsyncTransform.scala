@@ -18,8 +18,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     // This implicit propagates the annotated type in the type tag.
 //    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
 
-    println(s"body = $body")
-    markContainsAwait(body) // TODO: is this needed?
+    markContainsAwait(body) // TODO AM: is this needed?
     reportUnsupportedAwaits(body)
 
     // Transform to A-normal form:
@@ -32,20 +31,12 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     cleanupContainsAwaitAttachments(anfTree)
     markContainsAwait(anfTree)
 
-    println("ANFANF")
-    println(anfTree)
-    println("FNAFNA")
-
-//    anfTree
-
-    // TODO: unchecked bounds if !isPastErasure
     val resultTypeTag = WeakTypeTag(uncheckedBounds(transformType(resultType)))
-//    implicit val uncheckedBoundsResultTag: WeakTypeTag[T] = WeakTypeTag[T](uncheckedBounds(transformType(resultType)))
 
     val applyDefDefDummyBody: DefDef = apply1ToUnitDefDef(tryAny)
 
     // Create `ClassDef` of state machine with empty method bodies for `resume` and `apply`.
-    // TODO: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
+    // TODO AM: can we only create the symbol for the state machine class for now and then type check the assembled whole later,
     // instead of splicing stuff in (spliceMethodBodies)?
     val stateMachine: ClassDef = {
       val body: List[Tree] = {
@@ -67,13 +58,10 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       // See SI-1247 for the the optimization that avoids creation.
       val funParents = List(function1ToUnit(tryAny, useClass), function0ToUnit)
 
-      // TODO: after erasure we have to change the order of these parents etc
+      // TODO AM: after erasure we have to change the order of these parents etc
       val templ = gen.mkTemplate(transformParentTypes(customParents ::: funParents).map(TypeTree(_)), noSelfType, NoMods, List(Nil), body)
 
-      println(s"ASYNC")
-      println(showRaw(body))
-
-      // TODO: add a dependency on scala-compiler and get rid of this roundabout type checking hack?
+      // TODO AM: add a dependency on scala-compiler and get rid of this roundabout type checking hack?
       // or can we skip the type checking entirely and just create a symbol?
       {
         val Block(cd1 :: Nil, _) =
@@ -119,7 +107,7 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
           val global: u.type with Global = u.asInstanceOf[u.type with Global]
 
           stateMachineSpliced foreach {
-            case dt: DefTree if dt.hasExistingSymbol => // TODO: why can't we skip symbols that hasTypeAt(currentRun.explicitouterPhase.id)
+            case dt: DefTree if dt.hasExistingSymbol => // TODO AM: why can't we skip symbols that hasTypeAt(currentRun.explicitouterPhase.id)
               val sym = dt.symbol
               val savedInfo = sym.info
               val classSym = sym.asInstanceOf[global.Symbol]
@@ -162,14 +150,6 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       if (isSimple) spawn(body, execContext) // generate lean code for the simple case of `async { 1 + 1 }`
       else startStateMachine
 
-    object check extends Traverser {
-      override def traverse(t: Tree) {
-        if (t.hasSymbolField && t.symbol.info.isInstanceOf[NullaryMethodType]) println("UHOH "+ t)
-        super.traverse(t)
-      }
-    }
-
-    check.traverse(result)
     if(AsyncUtils.verbose) {
       logDiagnostics(anfTree, asyncBlock, asyncBlock.asyncStates.map(_.toString))
     }
@@ -252,14 +232,13 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
     def fixup(dd: DefDef, body: Tree, api: TypingTransformApi): Tree = {
       val spliceeAnfFixedOwnerSyms = body
       val newRhs = typingTransform(spliceeAnfFixedOwnerSyms, dd.symbol)(useFields)
-      println(newRhs)
       val newRhsTyped = api.atOwner(dd, dd.symbol)(api.typecheck(newRhs))
       treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, newRhsTyped)
     }
 
     liftablesUseFields.foreach(t => if (t.symbol != null) stateMachineClass.info.decls.enter(t.symbol))
 
-    // TODO: refine the resetting of the lazy flag -- this is so that local lazy vals that are lifted to the class
+    // TODO AM: refine the resetting of the lazy flag -- this is so that local lazy vals that are lifted to the class
     // actually get their LazyRef allocated to the var that holds the lazy val's reference
     if (isPastErasure)
       liftablesUseFields.foreach(t => if (t.symbol != null) t.symbol.resetFlag(Flags.LAZY))

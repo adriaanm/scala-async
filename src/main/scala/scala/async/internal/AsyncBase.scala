@@ -54,7 +54,7 @@ abstract class AsyncBase {
       // because they're basically a compiler plugin packaged as a macro.
       import u._
 
-      // TODO: rework
+      // TODO AM: rework
       val asyncNames: AsyncNames[u.type] = rootMirror.RootClass.attachments.get[AsyncNames[u.type]].getOrElse {
         val names = new AsyncNames[u.type](u)
         rootMirror.RootClass.attachments.update(names)

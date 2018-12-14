@@ -18,7 +18,7 @@ trait ExprBuilder extends TransformUtils {
   lazy val futureSystemOps: futureSystem.Ops[u.type] = futureSystem.mkOps(u, isPastErasure)
 
   // a very incomplete erasure transform to handle trees coming from the future system customisation hooks
-  // TODO: remove this hack, make the future system responsible for providing phase-appropriate trees
+  // TODO AM: remove this hack, make the future system responsible for providing phase-appropriate trees
   def erase(t: Tree): Tree = {
     object xform extends Transformer {
       private val notErased = Set[Symbol](definitions.Object_asInstanceOf, definitions.Object_isInstanceOf)
@@ -626,7 +626,7 @@ trait ExprBuilder extends TransformUtils {
        *     }
        */
       def onCompleteHandler[T: WeakTypeTag]: Tree = {
-        // TODO: this was unused -- don't understand what this does
+        // TODO AM: this was unused -- don't understand what this does
         // val onCompletes = initStates.flatMap(_.mkOnCompleteHandler[T])
         forever {
           adaptToUnit(toList(resumeFunTree))
@@ -659,7 +659,7 @@ trait ExprBuilder extends TransformUtils {
   private def mkHandlerCase(num: Int, rhs: Tree): CaseDef =
     CaseDef(Literal(Constant(num)), EmptyTree, rhs)
 
-  // TODO: should this explode blocks even when expr is not ()?
+  // TODO AM: should this explode blocks even when expr is not ()?
   private def toList(tree: Tree): List[Tree] = tree match {
     case Block(stats, expr) if isLiteralUnit(expr) => stats
     case _ => tree :: Nil

@@ -170,7 +170,7 @@ private[async] trait AnfTransform extends TransformUtils {
       }
 
       object _anf {
-        import treeInfo.Applied // TODO: do we need to full generality (esp. after erasure, probably not)
+        import treeInfo.Applied
 
         def transformToList(tree: Tree): List[Tree] = {
           mode = Anf; blockToList(api.recur(tree))
@@ -356,7 +356,6 @@ private[async] trait AnfTransform extends TransformUtils {
 
               tree match {
                 case Apply(fun, arg :: Nil) if isLabel(fun.symbol) && caseDefToMatchResult.contains(fun.symbol) =>
-                  println(s"convering labeldef apply $fun ${fun.symbol} ${fun.tpe} ${fun.symbol.id}")
                   val temp = caseDefToMatchResult(fun.symbol)
                   if (temp == NoSymbol)
                     typedPos(tree.pos)(Block(transform(arg) :: Nil, treeCopy.Apply(tree, fun, Nil)))

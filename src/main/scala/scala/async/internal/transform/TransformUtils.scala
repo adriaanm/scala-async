@@ -16,7 +16,7 @@ private[async] trait AsyncContext {
   val u: SymbolTable
   import u._
 
-  // TODO move asyncPos to asyncTransform method
+  // TODO AM move asyncPos to asyncTransform method
   val asyncPos: Position
   val Async_async: Symbol
   val Async_await: Symbol
@@ -38,6 +38,7 @@ private[async] trait AsyncContext {
 trait PhasedTransform extends AsyncContext {
   import u._
 
+  // We're not that granular, but keeping separate flag for semantics
   private lazy val isPastUncurry = isPastErasure
   private lazy val emptyParamss: List[Nil.type] = if (isPastUncurry) List(Nil) else Nil
   protected def applyNilAfterUncurry(t: Tree) = if (isPastUncurry) Apply(t, Nil) else t
@@ -97,11 +98,7 @@ trait PhasedTransform extends AsyncContext {
     tpsErased
   }
 
-  def transformType(tp: Type) = {
-    val res = if (isPastErasure) transformedType(tp) else tp
-    println(s"transform type $tp TO $res")
-    res
-  }
+  def transformType(tp: Type) = if (isPastErasure) transformedType(tp) else tp
 
   def mkAsInstanceOf(qual: Tree, tp: Type) = gen.mkCast(qual, tp)
 
@@ -132,7 +129,7 @@ trait PhasedTransform extends AsyncContext {
         Block(rhs, literalUnit)
     }
 
-  // TODO: why add the :Any type ascription to hide a tree of type Nothing? adaptToUnit doesn't seem to care
+  // TODO AM: why add the :Any type ascription to hide a tree of type Nothing? adaptToUnit doesn't seem to care
   def adaptToUnitIgnoringNothing(stats: List[Tree]): Block =
     stats match {
       case init :+ last if tpeOf(last) =:= definitions.NothingTpe =>

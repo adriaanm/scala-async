@@ -432,7 +432,6 @@ class LateExpansion {
       finally println(reporter.infos)
       //    }
       Assert.assertTrue(reporter.infos.mkString("\n"), !reporter.hasErrors)
-      println(reporter.infos)
       val loader = new URLClassLoader(Seq(new File(settings.outdir.value).toURI.toURL), global.getClass.getClassLoader)
       val cls = loader.loadClass("Test")
       cls.getMethod("test").invoke(null)
@@ -468,7 +467,7 @@ abstract class LatePlugin extends Plugin {
         // because they're basically a compiler plugin packaged as a macro.
         import u._
 
-        // TODO: rework
+        // TODO AM: rework
         val asyncNames: AsyncNames[u.type] = asyncNames_
 
         val Async_async = asyncSym
@@ -506,22 +505,16 @@ abstract class LatePlugin extends Plugin {
         }
       }
       private def transformAwait(awaitable: Tree) = {
-        print(s"transformAwait $awaitable")
         Apply(typeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(awaitable.tpe) :: Nil), awaitable :: Nil).setType(awaitable.tpe)
       }
       private def transformAsync(rhs: Tree)= {
-        println(s"XFORM ${rhs.tpe}")
-        val res = localTyper.typed(atPos(rhs.pos)(expand(localTyper, rhs, rhs.tpe)), pt = rhs.tpe)
-        println(s"XFORMED to ${rhs.tpe}\n$res")
-        res
+        localTyper.typed(atPos(rhs.pos)(expand(localTyper, rhs, rhs.tpe)), pt = rhs.tpe)
       }
 
     }
     override def newPhase(prev: Phase): Phase = new StdPhase(prev) {
       override def apply(unit: CompilationUnit): Unit = {
-        val translated = newTransformer(unit).transformUnit(unit)
-        println(show(unit.body))
-        translated
+        newTransformer(unit).transformUnit(unit)
       }
     }
 
