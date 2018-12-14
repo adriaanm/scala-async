@@ -104,31 +104,31 @@ abstract class AsyncTransform(val asyncBase: AsyncBase, val u: SymbolTable) exte
       val (stateMachineUsingOuter, newStateMachine) =
         if (!isPastErasure) (stateMachineSpliced, applyCtor)
         else {
+          // Since explicit outers has already run (it happens before erasure), we must run it ourselves on the class we're synthesizing.
+          // The state machine class is going to be lifted out by the flatten phase, but expressions contained in it
+          // will likely still need to access the outer class's instance.
+          // Thus, we add the standard outer argument to the constructor and supply it when instantiating the state machine.
+          // Lambdalift will also look for this and transform appropriately.
           val global: u.type with Global = u.asInstanceOf[u.type with Global]
 
           stateMachineSpliced foreach {
             case dt: DefTree if dt.hasExistingSymbol => // TODO AM: why can't we skip symbols that hasTypeAt(currentRun.explicitouterPhase.id)
               val sym = dt.symbol
-              val savedInfo = sym.info
               val classSym = sym.asInstanceOf[global.Symbol]
               val newInfo = global.explicitOuter.transformInfo(classSym, classSym.info)
               // we can't go back to explicit outer phase to retro-actively un-erase our current info and then add explicit outers,
               // we just have to run the explicitOuter info transform now (during erasure) and hope for the best
-              if (newInfo ne savedInfo)
+              if (newInfo ne sym.info)
                 classSym.setInfo(newInfo)
             case _ =>
           }
 
           val explicitOuters = new global.explicitOuter.ExplicitOuterTransformer(typingTransformers.callsiteTyper.context.unit.asInstanceOf[global.CompilationUnit])
 
-          val stateMachineWithOuters = {
-            explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
-          }
+          val stateMachineWithOuters = explicitOuters.transform(stateMachineSpliced.asInstanceOf[global.Tree])
 
-          val newStateMachine = {
-            explicitOuters.atOwner(stateMachine.symbol.owner.asInstanceOf[global.Symbol]) {
-              explicitOuters.transform(applyCtor.asInstanceOf[global.Tree])
-            }
+          val newStateMachine = explicitOuters.atOwner(stateMachine.symbol.owner.asInstanceOf[global.Symbol]) {
+            explicitOuters.transform(applyCtor.asInstanceOf[global.Tree])
           }
 
           (stateMachineWithOuters, newStateMachine)
