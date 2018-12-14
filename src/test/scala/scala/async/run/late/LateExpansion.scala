@@ -410,7 +410,7 @@ class LateExpansion {
 //      settings.debug.value = true
 //      settings.Ytyperdebug.value = true
 //      settings.uniqid.value = true
-      settings.Xprint.value = List("postpatmat", "constr", "flatten")
+//      settings.Xprint.value = List("postpatmat", "constr", "flatten")
       val isInSBT = !settings.classpath.isSetByUser
       if (isInSBT) settings.usejavacp.value = true
       val global = new Global(settings, reporter) {
@@ -427,9 +427,7 @@ class LateExpansion {
       val run = new Run
       val source = newSourceFile(code)
       //    TreeInterrogation.withDebug {
-      try run.compileSources(source :: Nil)
-      catch { case e: Exception => e.printStackTrace()}
-      finally println(reporter.infos)
+      run.compileSources(source :: Nil)
       //    }
       Assert.assertTrue(reporter.infos.mkString("\n"), !reporter.hasErrors)
       val loader = new URLClassLoader(Seq(new File(settings.outdir.value).toURI.toURL), global.getClass.getClassLoader)
@@ -453,64 +451,50 @@ abstract class LatePlugin extends Plugin {
     lazy val autoAwaitSym = symbolOf[autoawait]
     lazy val lateAsyncSym = symbolOf[lateasync]
 
-    private def typeApply(fun: Tree, targs: List[Tree]) =
-      if (isPast(currentRun.erasurePhase)) fun
-      else TypeApply(fun, targs)
-
     private val asyncNames_ = new AsyncNames[global.type](global)
 
-    def expand(localTyper: analyzer.Typer, tree: Tree, resultType: Type) = {
-      object asyncMacro extends AsyncTransform(AsyncId, global) {
+    def asyncTransform(localTyper: analyzer.Typer, tree: Tree, resultType: Type) = {
+      val asyncTransformId = new AsyncTransform(AsyncId, global) {
         override val u: global.type = global
-        // The actual transformation happens in terms of the internal compiler data structures.
-        // We hide the macro context from the classes in the transform package,
-        // because they're basically a compiler plugin packaged as a macro.
         import u._
 
-        // TODO AM: rework
         val asyncNames: AsyncNames[u.type] = asyncNames_
 
         val Async_async = asyncSym
         val Async_await = awaitSym
         val asyncPos    = tree.pos.makeTransparent
 
-        // a few forwarders to context, since they are not easily available through SymbolTable
         def typecheck(tree: Tree): Tree = localTyper.typed(tree)
         def abort(pos: Position, msg: String): Nothing = {localTyper.context.reporter.error(pos, msg); ???}
         def error(pos: Position, msg: String): Unit = localTyper.context.reporter.error(pos, msg)
 
-        val typingTransformers = new TypingTransformers {
-          val callsiteTyper: global.analyzer.Typer = localTyper.asInstanceOf[global.analyzer.Typer]
-        }
+        val typingTransformers =
+          new TypingTransformers {
+            val callsiteTyper = localTyper.asInstanceOf[global.analyzer.Typer]
+          }
       }
 
-      asyncMacro.asyncTransform(tree, asyncMacro.literalUnit, localTyper.context.owner)(resultType)
+      asyncTransformId.asyncTransform(tree, asyncTransformId.literalUnit, localTyper.context.owner)(resultType)
     }
 
 
     def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
-      override def transform(tree: Tree): Tree = {
-        super.transform(tree) match {
-          case ap@Apply(fun, _) if fun.symbol.hasAnnotation(autoAwaitSym) =>
-            localTyper.typed(transformAwait(ap))
-//          case sel: Select if sel.symbol.hasAnnotation(autoAwaitSym) && !(tree.tpe.isInstanceOf[MethodTypeApi] || tree.tpe.isInstanceOf[PolyTypeApi] ) =>
-//            localTyper.typed(transformAwait(sel))
-          case dd: DefDef if dd.symbol.hasAnnotation(lateAsyncSym) =>
-            atOwner(dd.symbol) { deriveDefDef(dd){ transformAsync }}
-          case vd: ValDef if vd.symbol.hasAnnotation(lateAsyncSym) =>
-            atOwner(vd.symbol) { deriveValDef(vd){ transformAsync }}
-          case vd: ValDef =>
-            vd
-          case x => x
-        }
-      }
-      private def transformAwait(awaitable: Tree) = {
-        Apply(typeApply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), TypeTree(awaitable.tpe) :: Nil), awaitable :: Nil).setType(awaitable.tpe)
-      }
-      private def transformAsync(rhs: Tree)= {
-        localTyper.typed(atPos(rhs.pos)(expand(localTyper, rhs, rhs.tpe)), pt = rhs.tpe)
-      }
+      def isAutoAwait(fun: Tree) = fun.symbol.hasAnnotation(autoAwaitSym)
+      // TODO AM: does this rely on `futureSystem.Fut[T] = T` (as is the case for the identity future system)
+      def transformAwait(awaitable: Tree) =
+        localTyper.typed(atPos(awaitable.pos)(Apply(gen.mkAttributedRef(asyncIdSym.typeOfThis, awaitSym), awaitable :: Nil)), pt = awaitable.tpe)
 
+      def isLateAsync(dd: ValOrDefDef) = dd.symbol.hasAnnotation(lateAsyncSym)
+      def transformAsync(rhs: Tree)=
+        localTyper.typed(atPos(rhs.pos)(asyncTransform(localTyper, rhs, rhs.tpe)), pt = rhs.tpe)
+
+      override def transform(tree: Tree): Tree =
+        super.transform(tree) match {
+          case ap@Apply(fun, _) if isAutoAwait(fun) => localTyper.typed(transformAwait(ap))
+          case dd: DefDef if isLateAsync(dd)        => atOwner(dd.symbol) { deriveDefDef(dd) { transformAsync } }
+          case vd: ValDef if isLateAsync(vd)        => atOwner(vd.symbol) { deriveValDef(vd) { transformAsync } }
+          case tree                                 => tree
+        }
     }
     override def newPhase(prev: Phase): Phase = new StdPhase(prev) {
       override def apply(unit: CompilationUnit): Unit = {
